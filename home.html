@@ -1,0 +1,260 @@
+// Licensed under GNU General Public License v3.0
+// See https://github.com/jeffasuk/thermostat/blob/master/LICENSE
+// jeff at jamcupboard.co.uk
+//
+<html><head>
+<meta http-equiv='Content-Type' content='text/html; charset=ISO-8859-1'>
+<style media='screen' type='text/css'>
+overlaid {
+    position: relative;
+    display: inline;
+}
+.overlay {
+    position: absolute;
+    bottom: 4;
+    left: 0;
+}
+</style>
+<script language=JavaScript>
+var xhttp;
+var total_image_width;
+var indicator_width = 1;
+var red_image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAD0lEQVQIHQEEAPv/AP8AAAMBAQDHBpJvAAAAAElFTkSuQmCC';
+var green_image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAB3RJTUUH4gYFFAc4U6owTgAAAAxJREFUCNdjYPjPAAACAgEAqiqeJwAAAABJRU5ErkJggg==';
+var blue_image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAD0lEQVQIHQEEAPv/AAAA/wEDAQA22QM2AAAAAElFTkSuQmCC';
+
+var done_set_limit_values = 0;
+
+function int32ToStr(num)
+{
+    return ''
+        + String.fromCharCode(num & 0xff)
+        + String.fromCharCode( (num / 256) & 0xff)
+        + String.fromCharCode( (num / 65536) & 0xff)
+        + String.fromCharCode( (num / 16777216) & 0xff);
+}
+function buildImageSrc(height, thickness, colour1, colour2)
+{
+    // build a string to be used as value of img.src attribute.
+    // width is always 1
+    // height is as parameter, with all rows in colour1 except the bottom 'thickness' rows, which are colour2
+    // each colour is a 3-byte BGR string
+    var filesize = 14 + 40 + 4 * height;
+    var filesize_str = int32ToStr(filesize);
+    var bmp_hdr = 'BM' + filesize_str + '\x00\x00\x00\x00' + '\x36' + '\x00\x00\x00';
+    var dib_hdr = '\x28\x00\x00\x00\x01\x00\x00\x00' + int32ToStr(height)
+        + '\x01\x00\x18\x00\x00\x00\x00\x00\x04\x00\x00\x00\x23\x2e\x00\x00\x23\x2e\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00';
+    var data = '';
+    for (var n = 0; n < thickness; ++n)
+    {
+        data += colour2 + '\x00';
+    }
+    for (var n = 0; n < (height - thickness); ++n)
+    {
+        data += colour1 + '\x00';
+    }
+    return btoa(bmp_hdr + dib_hdr + data)
+}
+
+function normalizeNumber(n)
+{
+    var s = n.toFixed(2);
+    var parts = s.split('.');
+    if (parts[1] == '00')
+    {
+        return parts[0];
+    }
+    if (parts[1].endsWith('0'))
+    {
+        return parts[0] + '.' + parts[1][0];
+    }
+    return s;
+}
+function setSizes(des_temperature, temperature)
+{
+    var temp_diff = temperature - des_temperature;
+    var off_from_target = Math.abs(temp_diff);
+    var bar_width = 2 * Math.max(1, Math.ceil(0.1 + off_from_target * 2) / 2);
+    var min_temp_on_bar = des_temperature - bar_width / 2;
+    var pix_per_deg = document.getElementById('temperaturebar').width / bar_width;
+      document.getElementById('temperaturebandindent').width = ((bar_width - 1) / 2) * pix_per_deg;
+      document.getElementById('temperatureband').width = pix_per_deg;
+      document.getElementById('temperatureindicatorindent').width = (temperature - min_temp_on_bar) * pix_per_deg -
+                    document.getElementById('temperatureindicator').width / 2;
+
+      document.getElementById('ctemp').innerHTML =  normalizeNumber(temperature);
+      document.getElementById('indent').width = document.getElementById('temperatureindicatorindent').width -
+             getTextWidth('ctemp') / 2;
+      document.getElementById('mintemp').innerHTML = normalizeNumber(min_temp_on_bar);
+      document.getElementById('destemp').innerHTML = normalizeNumber(des_temperature);
+      document.getElementById('indentpredes').width = (document.getElementById('temperaturebar').width 
+                                            - getTextWidth('destemp')) / 2
+                                            - getTextWidth('mintemp');
+      document.getElementById('maxtemp').innerHTML = normalizeNumber(des_temperature + bar_width / 2);
+      document.getElementById('indentmaxtemp').width = document.getElementById('temperaturebar').width
+                - getTextWidth('mintemp') - document.getElementById('indentpredes').width
+                - getTextWidth('destemp')
+                - getTextWidth('maxtemp');
+    temperature += 0.1;
+}
+
+function parseXml(xmlStr)
+{
+   return new window.DOMParser().parseFromString(xmlStr, 'text/xml');
+}
+function getTextWidth(item_id)
+{
+   return document.getElementById(item_id).getBoundingClientRect().width;
+}
+function gotStatusResponse()
+{
+   if (xhttp.readyState != 4)
+   {
+     return;    // not ready yet
+   }
+   if ( xhttp.status == 200)
+   {
+       try
+        {
+          var xmlDoc;
+          if (window.DOMParser)
+          {
+              parser = new DOMParser();
+              xmlDoc = parser.parseFromString(xhttp.responseText, 'text/xml');
+          }
+          else // Internet Explorer
+          {
+              xmlDoc = new ActiveXObject('Microsoft.XMLDOM');
+              xmlDoc.async = false;
+              xmlDoc.loadXML(xhttp.responseText);
+          }
+          var temperature = 1 * xmlDoc.getElementsByTagName('tmp')[0].childNodes[0].nodeValue;
+          var relay_state = 1 * xmlDoc.getElementsByTagName('state')[0].childNodes[0].nodeValue;
+          var des_temperature = 1 * xmlDoc.getElementsByTagName('des')[0].childNodes[0].nodeValue;
+
+          document.getElementById('onoffimg').src = (relay_state == 1) ? red_image : green_image;
+
+          if (!done_set_limit_values)
+          {
+             // don't do this twice, as that will keep overwriting anything that the user may have entered
+             document.getElementById('des_input').value = des_temperature;
+             document.getElementById('precision').value = xmlDoc.getElementsByTagName('prec')[0].childNodes[0].nodeValue;
+             document.getElementById('maxreporttime').value = xmlDoc.getElementsByTagName('maxrep')[0].childNodes[0].nodeValue;
+             var radio_button_id = xmlDoc.getElementsByTagName('mode')[0].childNodes[0].nodeValue + 'mode';
+             document.getElementById(radio_button_id).checked = true;
+             done_set_limit_values = 1;
+          }
+
+          // Temperature bar
+          setSizes(des_temperature, temperature);
+
+          // Graph
+          var div_elem = document.getElementById('graph');
+          var graph_width = div_elem.getAttribute('width');
+          var graph_height = div_elem.getAttribute('height');
+          var first_img_elem = div_elem.getElementsByTagName('img')[0];
+          var temp_diff = temperature - des_temperature;
+          var dot_colour = (relay_state == 1) ? '\x00\x00\xff' : '\x00\xff\x00';
+          div_elem.removeChild(first_img_elem);
+          first_img_elem.height = 10 + graph_height / 2 - graph_height * temp_diff / 5;    // assume 5deg spread on graph
+          first_img_elem.src = 'data:image/bmp;base64,' + buildImageSrc(first_img_elem.height, 2, '\xff\xff\xff', dot_colour);
+          div_elem.appendChild(first_img_elem);
+          // End of graph
+       }
+   catch (err)
+       {
+        // catch all errors, for info and to allow the reschedule to happen
+        console.log('Failed: ' + err.message);
+       }
+   }
+   setTimeout(fetchStatus, 2000);
+}
+function fetchStatus()
+{
+   xhttp = new XMLHttpRequest();
+   xhttp.onreadystatechange = gotStatusResponse;
+   xhttp.open('GET', '/status', true);
+   xhttp.setRequestHeader('Cache-Control', 'no-cache');
+   xhttp.send();
+}
+function startGettingStatus()
+{
+    // set temperature bar colour images
+    document.getElementById('temperaturebar').src = blue_image;
+    document.getElementById('temperatureband').src = green_image;
+    document.getElementById('temperatureindicator').src = red_image;
+    fetchStatus();
+}
+</script>
+</head>
+<body onLoad='startGettingStatus()'>
+<p><img id=onoffimg height=40 width=40 /></p>
+
+<!-- temperature bar
+Temperature bar is a single image.
+Overlaid on that is another image showing one degree's worth of the range.
+Overlaid on both is the temperature indicator preceded by an indent.
+The start and end of the bar are labelled with the temperature that that position represents.
+E.g. at 16 with target 17.5:
+                   16
+       XXXXXXXXXXXX|XXXXX|||||||||XXXXXXXXXXXXXXXXXX
+       15.5                 17.5                19.5
+-->
+
+<p>
+   <img id=indent height=0 width=30><span id=ctemp>--</span><br
+ /><overlaid>
+    <img width=400 height=10 id=temperaturebar />
+
+    <span class='overlay'>
+     <img width=0 height=0 id=temperaturebandindent /><img width=10 height=10 id=temperatureband />
+    </span>
+
+    <span class='overlay'>
+     <img width=0 height=0 id=temperatureindicatorindent /><img width=4 height=12 id=temperatureindicator />
+    </span>
+
+    </overlaid>
+<br>
+   <span id=mintemp>--</span
+   ><img id=indentpredes height=0 width=0><span id=destemp>--</span
+   ><img id=indentmaxtemp height=0 width=0><span id=maxtemp>--</span>
+</p>
+<!-- end of temperature bar -->
+
+<p id=debug />
+<form action='/settings'>
+Target temperature degC: <input type=text id=des_input name=des_temp value='' />
+        <input type=radio name=mode value=0 id=heatingmode >heating or 
+        <input type=radio name=mode value=1 id=coolingmode >cooling
+<br>Precision degC: <input type=text id=precision name=precision value='' />
+<br><span style='font-size:smaller'>This gives the minimum change in temperature that will be noticed.
+Set to a high value to give more inertia to both reporting and relay switching.</span>
+<br>Max. time (seconds) between reports: <input type=text id=maxreporttime name=maxreporttime value='' />
+<br><span style='font-size:smaller'>This forces a report to be sent after the specified time
+even if there was no reportable event.
+Reportable events are switching the relay on or off,
+and a change in temperature direction (in order to capture max/min values).
+Set zero for no timed reports.
+</span>
+<br><input type=submit value=apply />
+</form>
+
+    <overlaid>
+    <div id='graph' height=200 width=400>
+    <script language=JavaScript>
+        for (n=0; n<400; ++n)
+        {
+            document.write('<img style=\'vertical-align:top;\' width=1 height=0 />');
+        }
+    </script>
+    </div>
+     <hr class='overlay' width=400 style='top: 0;'>
+     <hr class='overlay' width=400 style='top:  80; border: 1px dashed #ff4040; border-style: none none dashed;'>
+     <hr class='overlay' width=400 style='top: 100; border: 1px dotted #808080; border-style: none none dotted;' >
+     <hr class='overlay' width=400 style='top: 120; border: 1px dashed #4040ff; border-style: none none dashed;'>
+     <hr class='overlay' width=400 style='top: 200;'>
+    </overlaid>
+
+</body>
+</html>

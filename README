@@ -1,0 +1,11 @@
+Thermostatic heater/cooler control using ESP8266 with on-board mains relay.
+
+Output: Mains on/off
+        Periodical reports to web server
+Input: At least one one-wire temperature sensor
+
+Requires libraries:
+	ESP8266Wifi
+	ESPAsyncWebserver
+	ESPAsyncTCP
+	OneWire

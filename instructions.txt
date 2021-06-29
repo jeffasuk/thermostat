@@ -1,0 +1,58 @@
+Licensed under GNU General Public License v3.0
+  See https://github.com/jeffasuk/espthermostat/blob/master/LICENSE
+  jeff at jamcupboard.co.uk
+
+Description
+
+The Thermostatic Heater Control is based on an ESP8266 with on-board mains relay (sometimes known as the "Yunshan ESP8266 WIFI Network Relay Module"). It is capable of monitoring a OneWire temperature sensor, controlling a mains switch up to 10A and uploading results to a webserver via WiFi.
+
+How to set it up.
+
+A new unit comes set up ready to be configured for your WiFi and webserver, via its own WiFi network and webserver. When you switch it on, the blue LED will flash once a second, mostly on, showing that it is in set-up mode.
+
+Use your smartphone or other WiFi device to look for the unit's WiFi access point. It is probably most convenient to be watching that display when you switch the unit on. The WiFi network name is "thermostatXX", where the "XX" are two letters that will generally be unique to your device. Any lack of uniqueness will matter only if another unit nearby is also in set-up mode and happens to have the same letters.
+
+Connect to the WiFi network. The password is thermoESP. (This network is used only during set-up, so does not need to be highly secure.)
+
+Open a web browser and go to http://192.168.4.1/setup
+
+This will give you the set-up page, where you can enter the following details:
+
+WiFi SSID
+    The SSID (name) of your WiFi network, that the unit will connect to.
+WiFi password
+    The password of your WiFi network.
+Unit identifier
+    This is any name that you choose. It will be sent with each monitoring report. It will enable your webserver to distinguish between multiple units if you have more than one.
+Server hostname
+    The hostname of the server that will receive messages from the unit.
+Server port
+    The port on that server (normally 80).
+Settings path
+    The 'path' part of the URL for getting new settings from the webserver. (Not implemented yet)
+Report path
+    The 'path' part of the URL for sending reports to the webserver.
+
+When you send the new settings, the unit will store them and will try to connect via your WiFi to your webserver. It will display a confirmation page telling you the results. This page also includes the settings form, so that you can change things if there was an error.
+
+The settings page has a checkbox to indicate that you want the unit to switch to normal operation after applying the settings, but it will do this only if it managed to connect to both the WiFi and the specified report server. Switching to normal operation includes taking down its own WiFi network. It is a good idea not to do this until you have checked the confirmation page.
+
+Normal operation
+
+Once set up, the unit enters a continual loop, reading the temperature sensor, deciding whether to switch the relay on or off, and (optionally) sending a report. The red LED matches the on/off state of the relay. The blue LED flashes twice a second while the sensor is being read and a report (if any) is being sent. The blue LED flashes once a second, with equal on/off periods, if there was failure to read te sensor, in which case the relay is switched off until a reading is obtained.
+
+Webserver configuration
+
+In order to collect reports, your webserver needs to provide handling for the report path that you configured. How exactly you do this depends on what sort of webserver you are using. The simplest way is probably with a CGI script. What is described here is the format of the request that the unit sends.
+
+Report format
+
+Reports are sent as an HTTP GET request with all values in the query-string. The individual items are:
+
+ident   As described above
+tmp    Temperature from the temperature sensor, in Celsius, as a decimal number.
+state  "on" or "off" to indicate the relay state.
+
+Example: http://my-server.me.org.uk/cgi-bin/report.cgi?ident=Number+one&tmp=18.13&state=on
+
+Notes on passwords: It is not a good idea to transmit or store passwords without some sort of encryption, or at least obfuscation. There are two passwords involved in this system, the unit's own password and that of the WiFi network that it is going to use. As described above, the unit's own password is not very important, but the WiFi network's password should be protected to prevent unauthorized access. It is not possible to put strong encryption onto the unit, not least because the unit itself needs to decrypt the password in order to use it to connect to the WiFi. So it uses a simple rotation encryption. While this does not provide a lot of protection, it does mean that, even if someone manages to get the memory contents from the unit, or snoop on the network traffic, they will not be able to find the password just by looking for an obvious character string.
