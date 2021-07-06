@@ -92,14 +92,9 @@ void setup()
         DOPRINTLN(" Entering set-up mode.");
         WiFi.mode(WIFI_AP_STA); // AP for now, then STA to check WiFi config when it's been set
         DOPRINTLN("Done WIFI_AP_STA");
-        DOPRINT  ("WiFi.SSID(): ");
-        DOPRINTLN(WiFi.SSID());
-        DOPRINTLN(".");
+        DOPRINTLN("WiFi.SSID: myESP");
         WiFi.softAP("myESP");
         IPAddress myIP = WiFi.softAPIP();
-        DOPRINT  ("WiFi.SSID(): ");
-        DOPRINTLN(WiFi.SSID());
-        DOPRINTLN(".");
         DOPRINT("AP IP address: ");
         DOPRINTLN(myIP);
         setLEDflashing(800, 200);
@@ -109,6 +104,8 @@ void setup()
     {
         WiFi.mode(WIFI_STA);    // Don't need AP now
         connectWiFi();
+        DOPRINT("IP address: ");
+        DOPRINTLN(WiFi.localIP());
     }
     startAsyncWebServer();  // need a webserver in all modes
 }
@@ -271,7 +268,7 @@ void loop()
         }
 
         setLEDflashing(0, 0);
-        // 1-sec delay between actions
-        delay(1000);
     }
+    // 1-sec delay between actions
+    delay(1000);
 }

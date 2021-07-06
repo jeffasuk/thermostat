@@ -4,7 +4,7 @@
 */
 #include "globals.h"
 
-char magic_tag[4] = "sth";    // To indicate that we've written to EEPROM, so it's OK to use the values.
+char magic_tag[4] = "thm";    // To indicate that we've written to EEPROM, so it's OK to use the values.
             // MUST change this if the format/structure of persistent data has changed, which
             // will force unit into setup mode, with its own WiFi access point
 

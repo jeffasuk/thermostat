@@ -25,6 +25,10 @@ var blue_image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQ
 
 var done_set_limit_values = 0;
 
+var canvas;
+var ctx;
+var value_lists = [];
+
 function int32ToStr(num)
 {
     return ''
@@ -32,28 +36,6 @@ function int32ToStr(num)
         + String.fromCharCode( (num / 256) & 0xff)
         + String.fromCharCode( (num / 65536) & 0xff)
         + String.fromCharCode( (num / 16777216) & 0xff);
-}
-function buildImageSrc(height, thickness, colour1, colour2)
-{
-    // build a string to be used as value of img.src attribute.
-    // width is always 1
-    // height is as parameter, with all rows in colour1 except the bottom 'thickness' rows, which are colour2
-    // each colour is a 3-byte BGR string
-    var filesize = 14 + 40 + 4 * height;
-    var filesize_str = int32ToStr(filesize);
-    var bmp_hdr = 'BM' + filesize_str + '\x00\x00\x00\x00' + '\x36' + '\x00\x00\x00';
-    var dib_hdr = '\x28\x00\x00\x00\x01\x00\x00\x00' + int32ToStr(height)
-        + '\x01\x00\x18\x00\x00\x00\x00\x00\x04\x00\x00\x00\x23\x2e\x00\x00\x23\x2e\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00';
-    var data = '';
-    for (var n = 0; n < thickness; ++n)
-    {
-        data += colour2 + '\x00';
-    }
-    for (var n = 0; n < (height - thickness); ++n)
-    {
-        data += colour1 + '\x00';
-    }
-    return btoa(bmp_hdr + dib_hdr + data)
 }
 
 function normalizeNumber(n)
@@ -70,6 +52,12 @@ function normalizeNumber(n)
     }
     return s;
 }
+
+function getTextWidth(item_id)
+{
+   return document.getElementById(item_id).getBoundingClientRect().width;
+}
+
 function setSizes(des_temperature, temperature)
 {
     var temp_diff = temperature - des_temperature;
@@ -102,10 +90,57 @@ function parseXml(xmlStr)
 {
    return new window.DOMParser().parseFromString(xmlStr, 'text/xml');
 }
-function getTextWidth(item_id)
+
+// valarray is an array of pairs of colours and new values, one pair for each trace
+var stroke_styles = ['#ff0000', '#00ff00']; // will not be needed eventually
+function updateGraph(valarray)
 {
-   return document.getElementById(item_id).getBoundingClientRect().width;
+	ctx.clearRect(0, 0, canvas.width, canvas.height);
+    for (var n = 0; n < valarray.length; ++n)
+    {
+        if (n >= value_lists.length)
+        {
+            value_lists[n] = [];
+        }
+        if (value_lists[n].length >= graph_width)
+        {
+            value_lists[n].shift(); // throw away oldest value
+        }
+        value_lists[n].push(valarray[n]);
+        drawPlot(value_lists[n]);
+    }
+	ctx.save();
+	ctx.beginPath();
+	ctx.lineWidth = 1;
+	ctx.strokeStyle = '#333333';    // dark centre line
+    ctx.moveTo(0, canvas.height / 2);
+    ctx.lineTo(canvas.width, canvas.height / 2);
+    ctx.stroke();
+	ctx.beginPath();
+	ctx.strokeStyle = '#888888';    // light upper and lower lines
+    ctx.setLineDash([5, 3]);
+    ctx.moveTo(0, canvas.height / 2 + canvas.height / 10);
+    ctx.lineTo(canvas.width, canvas.height / 2 + canvas.height / 10);
+    ctx.moveTo(0, canvas.height / 2 - canvas.height / 10);
+    ctx.lineTo(canvas.width, canvas.height / 2 - canvas.height / 10);
+    ctx.stroke();
+	ctx.restore();
 }
+
+function drawPlot(value_list)
+{
+    ctx.lineWidth = 1;
+	for(cnt=1; cnt < value_list.length; cnt++)
+    {
+        ctx.beginPath();
+        ctx.strokeStyle = value_list[cnt][0];   // set colour
+        ctx.moveTo(cnt-1, graph_height - value_list[cnt-1][1]);
+        ctx.lineTo(cnt, graph_height - value_list[cnt][1]);
+        ctx.stroke();
+	}
+}
+
+var dot_colours = ['#800000', '#008000', '#000080'];
 function gotStatusResponse()
 {
    if (xhttp.readyState != 4)
@@ -149,16 +184,26 @@ function gotStatusResponse()
           setSizes(des_temperature, temperature);
 
           // Graph
-          var div_elem = document.getElementById('graph');
-          var graph_width = div_elem.getAttribute('width');
-          var graph_height = div_elem.getAttribute('height');
-          var first_img_elem = div_elem.getElementsByTagName('img')[0];
-          var temp_diff = temperature - des_temperature;
-          var dot_colour = (relay_state == 1) ? '\x00\x00\xff' : '\x00\xff\x00';
-          div_elem.removeChild(first_img_elem);
-          first_img_elem.height = 10 + graph_height / 2 - graph_height * temp_diff / 5;    // assume 5deg spread on graph
-          first_img_elem.src = 'data:image/bmp;base64,' + buildImageSrc(first_img_elem.height, 2, '\xff\xff\xff', dot_colour);
-          div_elem.appendChild(first_img_elem);
+          var new_values = [];
+          var main_dot_colour = (relay_state == 1) ? '#ff0000' : '#00ff00';
+          var temps = xmlDoc.getElementsByTagName('tmp');
+          var i = 0;
+          for (let tmp_elem of temps)
+          {
+              if (i == 0)
+              {
+                  // first sensor is currently hard-coded as the controlling one
+                  dot_colour = main_dot_colour;
+              }
+              else
+              {
+                  dot_colour = dot_colours[i % dot_colours.length];
+              }
+              new_values.push( [dot_colour, getGraphPos(1 * tmp_elem.childNodes[0].nodeValue, des_temperature)] );
+              i +=1;
+          }
+          // update legend with sensor IDs
+          updateGraph(new_values);
           // End of graph
        }
    catch (err)
@@ -167,8 +212,15 @@ function gotStatusResponse()
         console.log('Failed: ' + err.message);
        }
    }
-   setTimeout(fetchStatus, 2000);
+   setTimeout(fetchStatus, 100);
 }
+function getGraphPos(temp, des)
+{
+    var temp_diff = temp - des;
+    var point_height = canvas.height / 2 + canvas.height * temp_diff / 5;    // assume 5deg spread on graph
+    return point_height;
+}
+
 function fetchStatus()
 {
    xhttp = new XMLHttpRequest();
@@ -183,6 +235,12 @@ function startGettingStatus()
     document.getElementById('temperaturebar').src = blue_image;
     document.getElementById('temperatureband').src = green_image;
     document.getElementById('temperatureindicator').src = red_image;
+    canvas = document.getElementById('graphCanvas');
+    // we might want these values to differ from full width/height, if there's other stuff on the canvas
+    graph_height = canvas.height;
+    graph_width = canvas.width;
+    ctx = canvas.getContext('2d');
+    canvas.style.border = 'black 1px solid';
     fetchStatus();
 }
 </script>
@@ -240,21 +298,7 @@ Set zero for no timed reports.
 <br><input type=submit value=apply />
 </form>
 
-    <overlaid>
-    <div id='graph' height=200 width=400>
-    <script language=JavaScript>
-        for (n=0; n<400; ++n)
-        {
-            document.write('<img style=\'vertical-align:top;\' width=1 height=0 />');
-        }
-    </script>
-    </div>
-     <hr class='overlay' width=400 style='top: 0;'>
-     <hr class='overlay' width=400 style='top:  80; border: 1px dashed #ff4040; border-style: none none dashed;'>
-     <hr class='overlay' width=400 style='top: 100; border: 1px dotted #808080; border-style: none none dotted;' >
-     <hr class='overlay' width=400 style='top: 120; border: 1px dashed #4040ff; border-style: none none dashed;'>
-     <hr class='overlay' width=400 style='top: 200;'>
-    </overlaid>
+<canvas id='graphCanvas' height='200' width='400'></canvas>
 
 </body>
 </html>
