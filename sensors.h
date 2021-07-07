@@ -6,24 +6,14 @@
 #ifndef _SENSORS_H
 #define _SENSORS_H
 
+#include "globals.h"
+
 typedef enum {
     DS_OK = 0,
     DS_NOTHING_FOUND,
     DS_INVALID_CRC,
     DS_UNKNOWN_DEVICE
 } DS_RESULT_CODE;
-
-// inter-module i/f
-typedef struct {
-    int             ok;
-    unsigned char   addr[8];
-    float           temperature_f, temperature_c;
-} TEMPERATURE_DATA;
-
-typedef struct {
-    int     nb_temperature_sensors;
-    TEMPERATURE_DATA temperature[MAX_TEMPERATURE_SENSORS];
-} SENSOR_DATA;
 
 // OneWire return codes
 #define ONEWIRE_OK  0

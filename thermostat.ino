@@ -116,7 +116,6 @@ static float        previous_temperature = IMPOSSIBLE_TEMPERATURE;     // for de
 // the loop routine runs over and over again forever:
 void loop()
 {
-    SENSOR_DATA sensor_data = {0};
     uint32_t    millis_now;
 
     setLED();   // allow operation of whatever flash/pulse mode has been set

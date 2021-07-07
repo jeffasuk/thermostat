@@ -35,9 +35,22 @@ extern char magic_tag[4];
 // sensors
 #define MAX_TEMPERATURE_SENSORS 8
 
+// inter-module i/f
+typedef struct {
+    int             ok;
+    unsigned char   addr[8];
+    float           temperature_f, temperature_c;
+} TEMPERATURE_DATA;
+
+typedef struct {
+    int     nb_temperature_sensors;
+    TEMPERATURE_DATA temperature[MAX_TEMPERATURE_SENSORS];
+} SENSOR_DATA;
+
 #define IMPOSSIBLE_TEMPERATURE  (-999999)
 
 extern float current_temperature;
+extern SENSOR_DATA sensor_data;
 extern int8_t relay_state;
 extern uint8_t in_setup_mode;
 extern char *new_etag;

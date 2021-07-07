@@ -16,7 +16,6 @@
 #define MYDOPRINT(x)
 #define MYDOPRINTLN(x)
 
-
 static void showaddr(unsigned char  addr[8])
 {
     char buf[17];

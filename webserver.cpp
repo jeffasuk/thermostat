@@ -11,6 +11,7 @@
 #include "eepromutils.h"
 #include "network.h"
 #include "persistence.h"
+#include "utils.h"
 
 static const char page_head[] =
         "<html>\n"
@@ -58,10 +59,19 @@ static void sendMainPage(AsyncWebServerRequest *request)
 
 static void sendStatus(AsyncWebServerRequest *request)
 {
+    int sensor_index;
+    char addr_buf[17];
     DOPRINTLN("Web request for sendStatus");
-    String response = String("<status>\n") +
-            String(" <tmp>")   + String(current_temperature) + String("</tmp>\n") +
-            String(" <state>") + String(relay_state) + String("</state>\n") +
+    String response = String("<status>\n");
+    for (sensor_index = 0; sensor_index < sensor_data.nb_temperature_sensors; ++ sensor_index)
+    {
+        response += String(" <tmp id=\"") +
+            String(formatAddr(addr_buf, sensor_data.temperature[sensor_index].addr)) +
+            String("\">") +
+            String(sensor_data.temperature[sensor_index].temperature_c) +
+            String("</tmp>\n");
+    }
+    response += String(" <state>") + String(relay_state) + String("</state>\n") +
             String(" <des>")   + String(persistent_data.desired_temperature) + String("</des>\n") +
             String(" <prec>")   + String(persistent_data.precision) + String("</prec>\n") +
             String(" <mode>")   + String(persistent_data.mode == HEATING ? "heating" : "cooling") + String("</mode>\n") +

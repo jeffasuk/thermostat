@@ -9,8 +9,9 @@ char magic_tag[4] = "thm";    // To indicate that we've written to EEPROM, so it
             // will force unit into setup mode, with its own WiFi access point
 
 
-// states.  -1 (or -1.0) means "unknown"
 float current_temperature = IMPOSSIBLE_TEMPERATURE;
+SENSOR_DATA sensor_data = {0};
+
 // -1 means "unknown"
 int8_t relay_state = -1;
 
