@@ -13,6 +13,14 @@
 #include "persistence.h"
 #include "utils.h"
 
+// enable debug printing in this module
+//#define DEBUGDOPRINT   DOPRINT
+//#define DEBUGDOPRINTLN DOPRINTLN
+
+// disable debug printing in this module
+#define DEBUGDOPRINT(x)
+#define DEBUGDOPRINTLN(x)
+
 static const char page_head[] =
         "<html>\n"
         "<head><title>ESP Thermostatic Controller</title></head>\n"
@@ -42,11 +50,11 @@ static AsyncWebServer *server;
 static void sendMainPage(AsyncWebServerRequest *request)
 {
     AsyncWebHeader  *ifnonematch_header;
-    DOPRINTLN("Web request for sendMainPage");
+    DEBUGDOPRINTLN("Web request for sendMainPage");
     if ( (ifnonematch_header = request->getHeader("if-none-match")) && ifnonematch_header->value() == String(home_etag))
     {
         // unchanged, so don't need to send content
-        DOPRINTLN("Unchanged. Send 304");
+        DEBUGDOPRINTLN("Unchanged. Send 304");
         request->send(304);
     }
     else
@@ -61,7 +69,7 @@ static void sendStatus(AsyncWebServerRequest *request)
 {
     int sensor_index;
     char addr_buf[17];
-    DOPRINTLN("Web request for sendStatus");
+    DEBUGDOPRINTLN("Web request for sendStatus");
     String response = String("<status>\n");
     for (sensor_index = 0; sensor_index < sensor_data.nb_temperature_sensors; ++ sensor_index)
     {
@@ -77,7 +85,7 @@ static void sendStatus(AsyncWebServerRequest *request)
             String(" <mode>")   + String(persistent_data.mode == HEATING ? "heating" : "cooling") + String("</mode>\n") +
             String(" <maxrep>")   + String(persistent_data.max_time_between_reports) + String("</maxrep>\n") +
         String("</status>\n");
-    DOPRINTLN(response);
+    DEBUGDOPRINTLN(response);
     request->send(200, "text/xml", response);
 }
 

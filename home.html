@@ -90,8 +90,7 @@ function parseXml(xmlStr)
    return new window.DOMParser().parseFromString(xmlStr, 'text/xml');
 }
 
-// valarray is an array of pairs of colours and new values, one pair for each trace
-var stroke_styles = ['#ff0000', '#00ff00']; // will not be needed eventually
+// valarray is an array of array of colours, line-widths and new values, one triple for each trace
 function updateGraph(valarray)
 {
 	ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -128,18 +127,18 @@ function updateGraph(valarray)
 
 function drawPlot(value_list)
 {
-    ctx.lineWidth = 1;
 	for(cnt=1; cnt < value_list.length; cnt++)
     {
         ctx.beginPath();
         ctx.strokeStyle = value_list[cnt][0];   // set colour
-        ctx.moveTo(cnt-1, graph_height - value_list[cnt-1][1]);
-        ctx.lineTo(cnt, graph_height - value_list[cnt][1]);
+        ctx.lineWidth = value_list[cnt][1];
+        ctx.moveTo(cnt-1, graph_height - value_list[cnt-1][2]);
+        ctx.lineTo(cnt, graph_height - value_list[cnt][2]);
         ctx.stroke();
 	}
 }
 
-var dot_colours = ['#800000', '#008000', '#000080'];
+var dot_colours = ['#808080', '#0b84a5', '#6f4e7c', '#ca472f']; // distinct from each other and from red/green used for the controlling trace
 function gotStatusResponse()
 {
    if (xhttp.readyState != 4)
@@ -194,19 +193,24 @@ function gotStatusResponse()
 
           for (let tmp_elem of temps)
           {
+              var tmp = tmp_elem.childNodes[0].nodeValue;
               var list_item = document.createElement('li');
+              var dot_colour, font_colour, line_width;
               if (i == 0)
               {
                   // first sensor is currently hard-coded as the controlling one
                   dot_colour = main_dot_colour;
+                  font_colour = '#000000';
+                  line_width = 2;
               }
               else
               {
-                  dot_colour = dot_colours[i % dot_colours.length];
+                  font_colour = dot_colour = dot_colours[i % dot_colours.length];
+                  line_width = 1;
               }
-              list_item.innerHTML = '<font color=\"' + dot_colour + '\">' + tmp_elem.id + '</font>';
+              list_item.innerHTML = '<pre><font color=\"' + font_colour + '\">' + tmp_elem.id + '</font> ' + tmp + '</pre>';
               doc_legend_elem.appendChild(list_item);
-              new_values.push( [dot_colour, getGraphPos(1 * tmp_elem.childNodes[0].nodeValue, des_temperature)] );
+              new_values.push( [dot_colour, line_width, getGraphPos(1 * tmp, des_temperature)] );
               i +=1;
           }
           updateGraph(new_values);
@@ -218,7 +222,7 @@ function gotStatusResponse()
         console.log('Failed: ' + err.message);
        }
    }
-   setTimeout(fetchStatus, 100);
+   setTimeout(fetchStatus, 2000);
 }
 function getGraphPos(temp, des)
 {

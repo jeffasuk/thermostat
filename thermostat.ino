@@ -13,7 +13,7 @@
 
 // for detecting change in desired temperature
 static float previous_desired_temperature = IMPOSSIBLE_TEMPERATURE;
-static uint8_t temperature_changing = 0;    // flag
+static int8_t temperature_changing = 0;    // flag
 
 enum STATE {STATE_INIT, STATE_ON, STATE_OVERSHOOT, STATE_OFF, STATE_UNDERSHOOT};
 const char *stateName[] = {"INIT", "ON", "OVERSHOOT", "OFF", "UNDERSHOOT"}; // for debug and reporting

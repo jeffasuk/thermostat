@@ -134,6 +134,10 @@ void readSensors(SENSOR_DATA *result)
                     MYDOPRINTLN(temp_data.temperature_c);
                     result->temperature[i] = temp_data;
                     stored = 1;
+                    if (result->nb_temperature_sensors < (i + 1)) 
+                    {
+                        result->nb_temperature_sensors = i + 1;
+                    }
                     break;
                 }
                 if (first_empty < 0 && !result->temperature[i].addr[0])    // Assumes addr never starts with 0. May be invalid.
@@ -151,6 +155,10 @@ void readSensors(SENSOR_DATA *result)
                 MYDOPRINT(": ");
                 MYDOPRINTLN(temp_data.temperature_c);
                 result->temperature[first_empty] = temp_data;
+                if (result->nb_temperature_sensors < (first_empty + 1)) 
+                {
+                    result->nb_temperature_sensors = first_empty + 1;
+                }
             }
         }
         else
@@ -160,5 +168,7 @@ void readSensors(SENSOR_DATA *result)
         ds_start = 0;
     }
 
+    MYDOPRINT("nb temperatures ");
+    MYDOPRINTLN(result->nb_temperature_sensors);
     delete ds;
 }
