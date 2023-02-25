@@ -9,7 +9,6 @@
 #include "led.h"
 #include "sensors.h"
 #include "network.h"
-#include "http.h"
 #include "persistence.h"
 #include "utils.h"
 
