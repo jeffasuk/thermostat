@@ -336,7 +336,6 @@ void getResponse()
 
 void sendReport(float current_temperature, int relay_state, const char *comment, SENSOR_DATA *sensor_data)
 {
-    char buf[10];   // enough for a number
     int i;
 
     DOPRINTLN("sendReport");
@@ -366,7 +365,7 @@ void sendReport(float current_temperature, int relay_state, const char *comment,
         {
             if (sensor_data->temperature[i].ok == ONEWIRE_OK)
             {
-                char buf[9];
+                char buf[20];
                 client.print("&sensor_");
                 client.print(formatAddr(buf, sensor_data->temperature[i].addr));
                 client.print("=");
@@ -374,7 +373,10 @@ void sendReport(float current_temperature, int relay_state, const char *comment,
             }
         }
         free(sanitized_txt);
-        client.print(" HTTP/1.0\r\n\r\n");
+        client.print(" HTTP/1.0\r\n");  // 1.0 because we don't want to bother with 1.1 features like chunked transfer
+        client.print("Host:");          // Send Host header even though it's optional in 1.0, because Nginx insists on it. Sigh...
+        client.print(p_report_hostname);
+        client.print("\r\n\r\n");
         getResponse();
     }
     setLEDflashing(0, 0);
