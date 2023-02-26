@@ -14,7 +14,7 @@
 
 WiFiClient client;
 
-char APtag[] = "thermostat  ";
+static char APtag[] = "thermostat  ";
 
 static char *unrot(char *rotated_pswd)
 {
@@ -29,6 +29,27 @@ static char *unrot(char *rotated_pswd)
     *out = 0;
     return passclear;
 }
+
+void startAccessPoint()
+{
+    uint8_t mac[WL_MAC_ADDR_LENGTH];
+    char *tag_p;
+    uint8_t *mac_ptr;
+
+    WiFi.persistent(0); // Don't save config to flash.
+    WiFi.mode(WIFI_AP_STA);
+
+    // Fill trailing spaces in tag with chars determined by the MAC address for a little uniqueness
+    tag_p = APtag + sizeof APtag - 2;   // pointer to final char of APtag
+    mac_ptr = mac + WL_MAC_ADDR_LENGTH - 1;
+    WiFi.softAPmacAddress(mac);
+    while (tag_p >= APtag && *tag_p == ' ' && mac_ptr >= mac)
+    {
+        *tag_p-- = 'A' + (*mac_ptr-- % 26);
+    }
+    WiFi.softAP(APtag, "thermoESP");   // NB. Password must be at least 8 characters
+}
+
 
 uint8_t connectWiFi()
 {

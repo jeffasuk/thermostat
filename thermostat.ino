@@ -90,10 +90,7 @@ void setup()
     if (do_setup_mode)
     {
         DOPRINTLN(" Entering set-up mode.");
-        WiFi.mode(WIFI_AP_STA); // AP for now, then STA to check WiFi config when it's been set
-        DOPRINTLN("Done WIFI_AP_STA");
-        DOPRINTLN("WiFi.SSID: myESP");
-        WiFi.softAP("myESP");
+        startAccessPoint();
         IPAddress myIP = WiFi.softAPIP();
         DOPRINT("AP IP address: ");
         DOPRINTLN(myIP);
