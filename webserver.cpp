@@ -3,8 +3,9 @@
   jeff at jamcupboard.co.uk
 */
 
+#include <Arduino.h>
 #include <ESPAsyncTCP.h>
-#include <ESPAsyncWebServer.h>
+#include <ESPAsyncWebSrv.h>
 
 #include "globals.h"
 #include "home_html.h"
@@ -240,6 +241,14 @@ static void processSetupPath(AsyncWebServerRequest *request)
                 {
                     // It's some sort of password to be obfuscated for storage
                     int charindex;
+                    if (value.length() == 0)
+                    {
+                        // Issue #1
+                        // This will not have been filled in in the form, so don't do anything with it if it's empty.
+                        // Otherwise, the password (or whatever) will be blanked if the user has not re-entered the correct value.
+                        // (Yes, I did that myself before this check went in. Very annoying!)
+                        continue;
+                    }
                     for (charindex=0; charindex < value.length(); ++charindex)
                     {
                         char c = value.charAt(charindex);
