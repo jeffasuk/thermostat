@@ -6,6 +6,6 @@ Input: At least one one-wire temperature sensor
 
 Requires libraries:
 	ESP8266Wifi
-	ESPAsyncWebserver
+	ESPAsyncWebSrv
 	ESPAsyncTCP
 	OneWire
