@@ -3,10 +3,25 @@ Licensed under GNU General Public License v3.0
   jeff at jamcupboard.co.uk
 
 Description
+===========
 
-The Thermostatic Heater Control is based on an ESP8266 with on-board mains relay (sometimes known as the "Yunshan ESP8266 WIFI Network Relay Module"). It is capable of monitoring a OneWire temperature sensor, controlling a mains switch up to 10A and uploading results to a webserver via WiFi.
+The Thermostatic Heater Control is based on an ESP8266 with on-board mains relay (sometimes known as the "Yunshan ESP8266 WIFI Network Relay Module"). It is capable of monitoring a OneWire temperature sensor, controlling a mains switch up to 10A and uploading results to a webserver via WiFi. Further temperature sensors may also be monitored, but only one is used for controlling the relay.
 
-How to set it up.
+A website is provided for observing status and changing settings.
+
+How to build the software
+=========================
+
+Compilation and upload are done via the standard Arduino IDE, specifying a generic ESP8266 board.
+Prior to compiling, run 'make' in the source directory. This generates .c and .h files that hold the pages for the internal website.
+
+How to wire up the device
+=========================
+
+See the diagram in relay-board-diagram.jpg
+
+How to set it up
+================
 
 A new unit comes set up ready to be configured for your WiFi and webserver, via its own WiFi network and webserver. When you switch it on, the blue LED will flash once a second, mostly on, showing that it is in set-up mode.
 
@@ -38,14 +53,17 @@ When you send the new settings, the unit will store them and will try to connect
 The settings page has a checkbox to indicate that you want the unit to switch to normal operation after applying the settings, but it will do this only if it managed to connect to both the WiFi and the specified report server. Switching to normal operation includes taking down its own WiFi network. It is a good idea not to do this until you have checked the confirmation page.
 
 Normal operation
+================
 
 Once set up, the unit enters a continual loop, reading the temperature sensor, deciding whether to switch the relay on or off, and (optionally) sending a report. The red LED matches the on/off state of the relay. The blue LED flashes twice a second while the sensor is being read and a report (if any) is being sent. The blue LED flashes once a second, with equal on/off periods, if there was failure to read te sensor, in which case the relay is switched off until a reading is obtained.
 
 Webserver configuration
+=======================
 
 In order to collect reports, your webserver needs to provide handling for the report path that you configured. How exactly you do this depends on what sort of webserver you are using. The simplest way is probably with a CGI script. What is described here is the format of the request that the unit sends.
 
 Report format
+=============
 
 Reports are sent as an HTTP GET request with all values in the query-string. The individual items are:
 
