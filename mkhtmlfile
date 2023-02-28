@@ -17,6 +17,7 @@ multi_space_re = re.compile(r' +')
 multi_newline_re = re.compile(r'\n\n+')
 hex_value_re = re.compile(r'\\x')
 escaped_quote_re = re.compile(r"\\'")
+backslash_n_re = re.compile(r'\\n')
 
 text = open(infilename).read()
 
@@ -26,6 +27,7 @@ text = multi_space_re.sub(' ', text)
 text = multi_newline_re.sub(r'\n', text)
 text = hex_value_re.sub(r'\\\\x', text)
 text = escaped_quote_re.sub(r"\\\\'", text)
+text = backslash_n_re.sub(r"\\\\n", text)
 
 etag = hashlib.md5(text.encode('UTF8')).hexdigest()
 

@@ -180,7 +180,7 @@ static void settings(AsyncWebServerRequest *request)
         DOPRINTLN("Writing settings to EEPROM");
         writeToEeprom();
     }
-    request->redirect("/");
+    sendStatus(request);
 }
 
 static int getNameIndex(const char *name)

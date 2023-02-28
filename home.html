@@ -1,7 +1,7 @@
-// Licensed under GNU General Public License v3.0
-// See https://github.com/jeffasuk/thermostat
-// jeff at jamcupboard.co.uk
-//
+<!-- Licensed under GNU General Public License v3.0
+   See https://github.com/jeffasuk/thermostat
+   jeff at jamcupboard.co.uk
+-->
 <html><head>
 <meta http-equiv='Content-Type' content='text/html; charset=ISO-8859-1'>
 <style media='screen' type='text/css'>
@@ -17,12 +17,10 @@ overlaid {
 </style>
 <script language=JavaScript>
 var xhttp;
-var indicator_width = 1;
 var red_image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAD0lEQVQIHQEEAPv/AP8AAAMBAQDHBpJvAAAAAElFTkSuQmCC';
 var green_image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAB3RJTUUH4gYFFAc4U6owTgAAAAxJREFUCNdjYPjPAAACAgEAqiqeJwAAAABJRU5ErkJggg==';
 var blue_image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAD0lEQVQIHQEEAPv/AAAA/wEDAQA22QM2AAAAAElFTkSuQmCC';
-
-var done_set_limit_values = 0;
+var black_image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVQI12NgYGAAAAAEAAEnNCcKAAAAAElFTkSuQmCC';
 
 var canvas;
 var ctx;
@@ -141,11 +139,7 @@ function drawPlot(value_list)
 var dot_colours = ['#808080', '#0b84a5', '#6f4e7c', '#ca472f']; // distinct from each other and from red/green used for the controlling trace
 function gotStatusResponse()
 {
-   if (xhttp.readyState != 4)
-   {
-     return;    // not ready yet
-   }
-   if ( xhttp.status == 200)
+   if (xhttp.status == 200)
    {
        try
         {
@@ -164,19 +158,16 @@ function gotStatusResponse()
           var temperature = 1 * xmlDoc.getElementsByTagName('tmp')[0].childNodes[0].nodeValue;
           var relay_state = 1 * xmlDoc.getElementsByTagName('state')[0].childNodes[0].nodeValue;
           var des_temperature = 1 * xmlDoc.getElementsByTagName('des')[0].childNodes[0].nodeValue;
+          var mode = xmlDoc.getElementsByTagName('mode')[0].childNodes[0].nodeValue;
 
-          document.getElementById('onoffimg').src = (relay_state == 1) ? red_image : green_image;
-
-          if (!done_set_limit_values)
-          {
-             // don't do this twice, as that will keep overwriting anything that the user may have entered
-             document.getElementById('des_input').value = des_temperature;
-             document.getElementById('precision').value = xmlDoc.getElementsByTagName('prec')[0].childNodes[0].nodeValue;
-             document.getElementById('maxreporttime').value = xmlDoc.getElementsByTagName('maxrep')[0].childNodes[0].nodeValue;
-             var radio_button_id = xmlDoc.getElementsByTagName('mode')[0].childNodes[0].nodeValue + 'mode';
-             document.getElementById(radio_button_id).checked = true;
-             done_set_limit_values = 1;
-          }
+          document.getElementById('onoffimg').src = (relay_state == 1)
+                ? (mode == 'heating' ? red_image : blue_image)
+                : green_image;
+          document.getElementById('onofftext').textContent = 'Power ' + ((relay_state == 1) ? ('on (' + mode + ')') : 'off');
+          document.getElementById('displaytargettemp').textContent = des_temperature;
+          document.getElementById('displayprecision').textContent = xmlDoc.getElementsByTagName('prec')[0].childNodes[0].nodeValue;
+          document.getElementById('displayreptime').textContent = xmlDoc.getElementsByTagName('maxrep')[0].childNodes[0].nodeValue;
+          document.getElementById('displaymode').textContent = mode;
 
           // Temperature bar
           setSizes(des_temperature, temperature);
@@ -222,7 +213,6 @@ function gotStatusResponse()
         console.log('Failed: ' + err.message);
        }
    }
-   setTimeout(fetchStatus, 2000);
 }
 function getGraphPos(temp, des)
 {
@@ -234,7 +224,7 @@ function getGraphPos(temp, des)
 function fetchStatus()
 {
    xhttp = new XMLHttpRequest();
-   xhttp.onreadystatechange = gotStatusResponse;
+   xhttp.onload = gotStatusResponse;
    xhttp.open('GET', '/status', true);
    xhttp.setRequestHeader('Cache-Control', 'no-cache');
    xhttp.send();
@@ -242,7 +232,7 @@ function fetchStatus()
 function startGettingStatus()
 {
     // set temperature bar colour images
-    document.getElementById('temperaturebar').src = blue_image;
+    document.getElementById('temperaturebar').src = black_image;
     document.getElementById('temperatureband').src = green_image;
     document.getElementById('temperatureindicator').src = red_image;
     canvas = document.getElementById('graphCanvas');
@@ -251,12 +241,58 @@ function startGettingStatus()
     graph_width = canvas.width;
     ctx = canvas.getContext('2d');
     canvas.style.border = 'black 1px solid';
-    fetchStatus();
+    setInterval(fetchStatus, 2000);
+    fetchStatus(); // do one immediately
+}
+
+function gotChangeSettingsResponse()
+{
+   if (xhttp.status == 200)
+   {
+      alert('Settings changed');
+      fetchStatus(); // update the display to show new settings ASAP
+                // Could have the settings response provide the new settings instead
+   }
+   else
+   {
+      alert(xhttp.status + ' ' + xhttp.statusText + '\n' + xhttp.responseText);
+   }
+}
+
+function submitSettingsForm()
+{
+   var form = document.getElementById('settings-form');
+   var form_elems = form.getElementsByTagName('input');
+   var params = '';
+   for (var idx = 0; idx < form_elems.length; ++idx)
+   {
+      var form_elem = form_elems[idx];
+      var elem_name = form_elem.getAttribute('name');
+      if (!elem_name)
+      {
+         continue;
+      }
+      var elem_type = form_elem.getAttribute('type');
+      if (elem_type == 'radio')
+      {
+          if (!form_elem.checked)
+          {
+             continue;  // ignore unchecked radio button
+          }
+      }
+      params += elem_name + '=' + form_elem.value + '&';
+   }
+   xhttp = new XMLHttpRequest();
+   xhttp.onload = gotChangeSettingsResponse;
+   xhttp.open('GET', '/settings?' + params.substring(0, params.length - 1), true);
+   xhttp.setRequestHeader('Cache-Control', 'no-cache');
+   xhttp.send();
 }
 </script>
 </head>
 <body onLoad='startGettingStatus()'>
-<p><img id=onoffimg height=40 width=40 /></p>
+<table border=0><tr valign=middle><td><img id=onoffimg height=40 width=40 style='border-radius: 50%;' /></td>
+<td><span id=onofftext></span></td></tr></table>
 
 <!-- temperature bar
 Temperature bar is a single image.
@@ -290,8 +326,19 @@ E.g. at 16 with target 17.5:
 </p>
 <!-- end of temperature bar -->
 
-<p id=debug />
-<form action='/settings'>
+<canvas id='graphCanvas' height='200' width='400'></canvas>
+<ul id='legend'>
+</ul>
+
+<p>
+Target temperature degC: <span id=displaytargettemp>??</span>
+<br>Mode: <span id=displaymode>??</span>
+<br>Precision degC: <span id=displayprecision>??</span>
+<br>Max. time (seconds) between reports: <span id=displayreptime>??</span>
+</p>
+
+<h3>Change settings</h3>
+<form id='settings-form'>
 Target temperature degC: <input type=text id=des_input name=des_temp value='' />
         <input type=radio name=mode value=0 id=heatingmode >heating or 
         <input type=radio name=mode value=1 id=coolingmode >cooling
@@ -305,12 +352,7 @@ Reportable events are switching the relay on or off,
 and a change in temperature direction (in order to capture max/min values).
 Set zero for no timed reports.
 </span>
-<br><input type=submit value=apply />
+<br><input type=button value=apply onClick='submitSettingsForm()' />
 </form>
-
-<canvas id='graphCanvas' height='200' width='400'></canvas>
-<ul id='legend'>
-</ul>
-
 </body>
 </html>
