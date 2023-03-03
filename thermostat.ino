@@ -13,6 +13,7 @@
 
 // for detecting change in desired temperature
 static float previous_desired_temperature = IMPOSSIBLE_TEMPERATURE;
+static uint8_t previous_mode = 99;  // matches neither of the valid mode values
 static int8_t temperature_changing = 0;    // flag
 
 enum STATE {STATE_INIT, STATE_ON, STATE_OVERSHOOT, STATE_OFF, STATE_UNDERSHOOT};
@@ -150,17 +151,24 @@ void loop()
         int do_check = 0;
         const char *report_comment = NULL;
         temperature_to_report = current_temperature = sensor_data.temperature[0].temperature_c;
-        DOPRINT  ("   current temperature ");
+        DOPRINT  ("   temperature ");
         DOPRINT  (current_temperature);
-        DOPRINT  ("   temperature changing? ");
+        DOPRINT  ("   changing? ");
         DOPRINT  (temperature_changing);
         DOPRINT  ("   abs(change) ");
         DOPRINT  (abs(previous_temperature - current_temperature));
         DOPRINT  ("   precision ");
-        DOPRINTLN(persistent_data.precision);
-        if (previous_temperature == IMPOSSIBLE_TEMPERATURE || persistent_data.desired_temperature != previous_desired_temperature)
+        DOPRINT  (persistent_data.precision);
+        DOPRINT  ("  mode ");
+        DOPRINT  (persistent_data.mode);
+        DOPRINTLN(persistent_data.mode == HEATING ? " heating" : " cooling");
+        if (previous_temperature == IMPOSSIBLE_TEMPERATURE  // start-up state
+            || persistent_data.desired_temperature != previous_desired_temperature // new desired temperature
+            || persistent_data.mode != previous_mode // new mode
+          )
         {
-            // first time after reset or change in desired temperature, so report current temperature and use it to decide action
+            // first time after reset or change in settings, so report
+            // current temperature and use it to decide action
             send_report = 1;
             if (previous_temperature == IMPOSSIBLE_TEMPERATURE)
             {
@@ -169,10 +177,11 @@ void loop()
             }
             else
             {
-                report_comment = "First time after change in desired temperature";
-                previous_desired_temperature = persistent_data.desired_temperature;
-                DOPRINTLN("report because of change in desired temperature");
+                report_comment = "First time after change in settings";
+                DOPRINTLN("report because of change in settings");
             }
+            previous_desired_temperature = persistent_data.desired_temperature;
+            previous_mode = persistent_data.mode;
             previous_temperature = current_temperature;
             temperature_to_report = current_temperature;
             do_check = 1;
