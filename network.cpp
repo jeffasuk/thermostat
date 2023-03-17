@@ -334,10 +334,9 @@ void getResponse()
     client.stop();
 }
 
-void sendReport(float current_temperature, int relay_state, const char *comment, SENSOR_DATA *sensor_data)
+void sendReport(float current_temperature, float switch_temperature, int relay_state,
+        const char *comment, SENSOR_DATA *sensor_data)
 {
-    int i;
-
     DOPRINTLN("sendReport");
     if (!connectTCP())
     {
@@ -357,11 +356,13 @@ void sendReport(float current_temperature, int relay_state, const char *comment,
         client.print(persistent_data.desired_temperature);
         client.print("&tmp=");
         client.print(current_temperature);
+        client.print("&sw=");
+        client.print(switch_temperature);
         client.print("&relay=");
         client.print(relay_state ? "on" : "off");
         client.print("&txt=");
         client.print(sanitized_txt);
-        for (i = 0; i < MAX_TEMPERATURE_SENSORS; ++i)
+        for (int i = 0; i < MAX_TEMPERATURE_SENSORS; ++i)
         {
             if (sensor_data->temperature[i].ok == ONEWIRE_OK)
             {

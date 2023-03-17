@@ -11,13 +11,34 @@
 #include "sensors.h"
 #include "webserver.h"
 
-// for detecting change in desired temperature
+// for detecting change in desired temperature and other settings
 static float previous_desired_temperature = IMPOSSIBLE_TEMPERATURE;
 static uint8_t previous_mode = 99;  // matches neither of the valid mode values
 static int8_t temperature_changing = 0;    // flag
+static uint8_t done_cycle = 0;
 
-enum STATE {STATE_INIT, STATE_ON, STATE_OVERSHOOT, STATE_OFF, STATE_UNDERSHOOT};
-const char *stateName[] = {"INIT", "ON", "OVERSHOOT", "OFF", "UNDERSHOOT"}; // for debug and reporting
+enum RELAY_STATE {POWER_OFF, POWER_ON};
+const char *powerStateName[] = {"OFF", "ON"}; // for debug and reporting
+
+static uint32_t    millis_now;
+static uint32_t time_when_switched_on;
+static float temp_when_switched_on;
+static uint32_t time_when_switched_off;
+static float temp_when_switched_off;
+static uint32_t     millis_at_last_report = 0;
+static float        previous_temperature = IMPOSSIBLE_TEMPERATURE;     // for detecting direction change
+
+// rotating history of discrepancies from switch temperature
+#define HISTORY_LENGTH  5
+static float past_max[HISTORY_LENGTH] = {0};
+static float past_min[HISTORY_LENGTH] = {0};
+static uint8_t max_history_index = HISTORY_LENGTH-1;
+static uint8_t min_history_index = HISTORY_LENGTH-1;
+static float min_temperature = IMPOSSIBLE_TEMPERATURE;
+static float max_temperature = IMPOSSIBLE_TEMPERATURE;
+static float switch_temperature = IMPOSSIBLE_TEMPERATURE;
+static float max_discrepancy_down = 2.0;
+static float max_discrepancy_up = 2.0;
 
 /* NB The terms "up" and "down" refer to the direction in which the power operates, so "up" means
    increasing temperature when heating, but decreasing temperature when cooling.
@@ -26,23 +47,132 @@ const char *stateName[] = {"INIT", "ON", "OVERSHOOT", "OFF", "UNDERSHOOT"}; // f
 
 float normalizeTemperature(float temperature)
 {
-    // override for inverted operation (i.e. cooling instead of heating)
-    DOPRINT  ("normalizeTemperature ");
-    DOPRINT  (temperature);
-    DOPRINT  (" to ");
+    // invert temperature for inverted operation (i.e. cooling instead of heating)
     if (persistent_data.mode == HEATING)
     {
-        DOPRINTLN("same");
+        // no change
         return temperature;
     }
     // cooling; invert temperature
-    float ret = (temperature == IMPOSSIBLE_TEMPERATURE) ? IMPOSSIBLE_TEMPERATURE : -temperature;
-    DOPRINTLN(ret);
-    return ret;
+    return (temperature == IMPOSSIBLE_TEMPERATURE) ? IMPOSSIBLE_TEMPERATURE : -temperature;
 }
 float getDesiredTemperature()
 {
     return normalizeTemperature(persistent_data.desired_temperature);
+}
+
+static void setIfImpossible(float *var, float default_value)
+{
+    // If the supplied variable is IMPOSSIBLE_TEMPERATURE, set it to the provided value
+    if (*var == IMPOSSIBLE_TEMPERATURE)
+    {
+        *var = default_value;
+    }
+}
+
+#ifdef NO_DONT_DO_THIS_RIGHT_NOW
+static int assessRelayStateSimple(int pre_relay_state)
+{
+    // This just switches on when too cool and off when too warm. Not currently in use.
+    // Maybe we should be able switch to this at runtime for testing purposes.
+    if (normalizeTemperature(current_temperature) < getDesiredTemperature())
+    {
+        return POWER_ON;
+    }
+    return POWER_OFF;
+}
+#endif
+
+static int8_t assessRelayState(int8_t pre_relay_state)
+{
+    uint8_t switched = 0;
+    int8_t new_relay_state = pre_relay_state;
+
+    setIfImpossible(&switch_temperature, persistent_data.desired_temperature);
+    setIfImpossible(&max_temperature, current_temperature);
+    setIfImpossible(&min_temperature, current_temperature);
+    if (normalizeTemperature(current_temperature) >= normalizeTemperature(switch_temperature))
+    {
+        if (pre_relay_state == POWER_ON)
+        {
+            // too warm for power on, so switch off
+            // record discrepancy of min temperature up to this point
+            done_cycle = !done_cycle;
+            new_relay_state = POWER_OFF;
+            switched = 1;
+        }
+    }
+    else
+    {
+        if (pre_relay_state == POWER_OFF)
+        {
+            // too cool for power off, so switch on
+            // record discrepancy of max temperature up to this point
+            done_cycle = !done_cycle;
+            new_relay_state = POWER_ON;
+            switched = 1;
+        }
+    }
+    if (switched)
+    {
+        if ( (new_relay_state == POWER_OFF && persistent_data.mode == HEATING)
+          || (new_relay_state == POWER_ON  && persistent_data.mode == COOLING)
+            )
+        {
+            // just switched heating off or cooling on, so we're heading for a temperature peak
+            // record the temperature discrepancy at the preceding temperature trough...
+            min_history_index = (min_history_index + 1) % HISTORY_LENGTH;
+            past_min[min_history_index] = min_temperature - switch_temperature;
+            // ... and start recording max temperature in order to capture level of next temperature peak
+            max_temperature = current_temperature;
+        }
+        else  // must have just switched heating on or cooling off, so we're heading for a temperature trough
+        {
+            // record the temperature discrepancy at the preceding temperature peak...
+            max_history_index = (max_history_index + 1) % HISTORY_LENGTH;
+            past_max[max_history_index] = max_temperature - switch_temperature;
+            // ... and start recording min temperature in order to capture level of next temperature trough
+            min_temperature = current_temperature;
+        }
+    }
+
+    max_temperature = max(max_temperature, current_temperature);
+    min_temperature = min(min_temperature, current_temperature);
+
+    if (     (past_min[min_history_index] > 0) || (past_min[min_history_index] < -max_discrepancy_down)
+          || (past_max[max_history_index] < 0) || (past_max[max_history_index] > max_discrepancy_up))
+    {
+        // a discrepancy is outside the range we can comfortably handle without ringing
+        // so reset to start-up state
+        DOPRINTLN("Reverting to start-up switching");
+        max_history_index = min_history_index = HISTORY_LENGTH-1;
+        for (int i = 0; i < HISTORY_LENGTH; ++i)
+        {
+            past_min[i] = past_max[i] = 0.0;
+        }
+        switch_temperature = persistent_data.desired_temperature;
+    }
+
+    if (switched && done_cycle)
+    {
+        // we've done an equal number of on/off events, and we've just switched,
+        // so assess performance
+        float average_discrepancy = 0;
+        for (int i = 0; i < HISTORY_LENGTH; ++i)
+        {
+            average_discrepancy += past_min[i] + past_max[i];
+        }
+        average_discrepancy /= HISTORY_LENGTH * 2;
+        DOPRINT("average discrepancy over ");
+        DOPRINT(HISTORY_LENGTH);
+        DOPRINT(" cycles: ");
+        DOPRINTLN(average_discrepancy);
+        // adjust switch point
+        switch_temperature = persistent_data.desired_temperature - average_discrepancy;
+        DOPRINT  ("New switch temperature: ");
+        DOPRINTLN(switch_temperature);
+    }
+    return new_relay_state;
 }
 
 
@@ -108,14 +238,9 @@ void setup()
     startAsyncWebServer();  // need a webserver in all modes
 }
 
-static uint32_t     millis_at_last_report = 0;
-static float        previous_temperature = IMPOSSIBLE_TEMPERATURE;     // for detecting direction change
-
 // the loop routine runs over and over again forever:
 void loop()
 {
-    uint32_t    millis_now;
-
     setLED();   // allow operation of whatever flash/pulse mode has been set
 
     if (in_setup_mode)
@@ -140,7 +265,7 @@ void loop()
     if (sensor_data.temperature[0].ok != ONEWIRE_OK)
     {
         DOPRINTLN("Failed to read controlling temperature sensor. Turning off for safety.");
-        relay_state = 0;
+        relay_state = POWER_OFF;
         setLEDflashing(500, 500);
         digitalWrite(RELAY_PIN, 0);
     }
@@ -151,17 +276,35 @@ void loop()
         int do_check = 0;
         const char *report_comment = NULL;
         temperature_to_report = current_temperature = sensor_data.temperature[0].temperature_c;
-        DOPRINT  ("   temperature ");
+#ifndef QUIET
+        DOPRINT  (powerStateName[relay_state]);
+        DOPRINT  (" at ");
         DOPRINT  (current_temperature);
-        DOPRINT  ("   changing? ");
-        DOPRINT  (temperature_changing);
-        DOPRINT  ("   abs(change) ");
-        DOPRINT  (abs(previous_temperature - current_temperature));
-        DOPRINT  ("   precision ");
-        DOPRINT  (persistent_data.precision);
-        DOPRINT  ("  mode ");
-        DOPRINT  (persistent_data.mode);
-        DOPRINTLN(persistent_data.mode == HEATING ? " heating" : " cooling");
+        DOPRINT  ("deg. ");
+        switch(temperature_changing)
+        {
+            case 0:
+                {
+                    DOPRINT  ("change less than ");
+                    DOPRINT  (persistent_data.precision);
+                }
+                break;
+            case 1:
+            case -1:
+                {
+                    DOPRINT  ("getting ");
+                    DOPRINT  (temperature_changing < 0 ? "cooler by " : "warmer by ");
+                    DOPRINT  (abs(previous_temperature - current_temperature));
+                }
+                break;
+        }
+        DOPRINT  ("   target ");
+        DOPRINT  (persistent_data.desired_temperature);
+        DOPRINT  ("   switching at ");
+        DOPRINT  (switch_temperature);
+        DOPRINT  (" for ");
+        DOPRINTLN(persistent_data.mode == HEATING ? "heating" : "cooling");
+#endif
         if (previous_temperature == IMPOSSIBLE_TEMPERATURE  // start-up state
             || persistent_data.desired_temperature != previous_desired_temperature // new desired temperature
             || persistent_data.mode != previous_mode // new mode
@@ -179,6 +322,13 @@ void loop()
             {
                 report_comment = "First time after change in settings";
                 DOPRINTLN("report because of change in settings");
+                if (switch_temperature != IMPOSSIBLE_TEMPERATURE)
+                {
+                    switch_temperature = persistent_data.desired_temperature + switch_temperature - previous_desired_temperature;
+                    DOPRINT  ("New switch temperature (settings change): ");
+                    DOPRINTLN(switch_temperature);
+                    DOPRINTLN("report because of change in settings");
+                }
             }
             previous_desired_temperature = persistent_data.desired_temperature;
             previous_mode = persistent_data.mode;
@@ -190,49 +340,49 @@ void loop()
         {
             // large enough change, so use for assessing direction of travel, store the new temperature as new previous value,
             // and indicate that we need to check whether power should be switched
+            char *change_name = NULL;
             if (previous_temperature < current_temperature)
             {
-                // getter warmer
+                // getting warmer
                 if (temperature_changing <= 0) // was getting cooler, or in initial zero state
                 {
                     temperature_changing = 1;
-                    send_report = 1;
+                    change_name = "warmer";
                     report_comment = "Started getting warmer";
-                    DOPRINTLN("report because now getting warmer");
-                    temperature_to_report = previous_temperature;   // report the more extreme, now that we're going in the opposite direction
                 }
             }
-            else if (previous_temperature > current_temperature)
+            else // previous_temperature must be > current_temperature as we already tested for same (or very small diff)
             {
-                // getter cooler
+                // getting cooler
                 if (temperature_changing >= 0) // was getting warmer, or in initial zero state
                 {
                     temperature_changing = -1;
-                    send_report = 1;
+                    change_name = "cooler";
                     report_comment = "Started getting cooler";
-                    DOPRINTLN("report because now getting cooler");
-                    temperature_to_report = previous_temperature;   // report the more extreme, now that we're going in the opposite direction
                 }
+            }
+            if (change_name != NULL)
+            {
+                // a reportable change has occurred
+                DOPRINT("report because now getting ");
+                DOPRINTLN(change_name);
+                send_report = 1;
+                temperature_to_report = previous_temperature;   // report the more extreme, now that we're going in the opposite direction
             }
             previous_temperature = current_temperature;
             do_check = 1;
         }
 
+        millis_now = millis();
+
         if (do_check)
         {
             // check temperature and turn relay on/off as appropriate
-            int pre_relay_state = relay_state;
+            int8_t pre_relay_state = relay_state;
             if (abs(persistent_data.desired_temperature - current_temperature) > persistent_data.precision)
             {
                 // sufficiently far from desired to make a change
-                if (normalizeTemperature(current_temperature) < getDesiredTemperature())
-                {
-                    relay_state = 1;    // on
-                }
-                else
-                {
-                    relay_state = 0;    // off
-                }
+                relay_state = assessRelayState(pre_relay_state);
             }
             if (relay_state != pre_relay_state)
             {
@@ -242,6 +392,9 @@ void loop()
                     report_comment = "Turning on";
                     DOPRINTLN("report because turning on");
                     DOPRINTLN("turn on");
+                    relay_state = POWER_ON;
+                    time_when_switched_on = millis_now;
+                    temp_when_switched_on = current_temperature;
                     digitalWrite(RELAY_PIN, 1);
                 }
                 else
@@ -250,15 +403,17 @@ void loop()
                     report_comment = "Turning off";
                     DOPRINTLN("report because turning off");
                     DOPRINTLN("turn off");
+                    relay_state = POWER_OFF;
+                    time_when_switched_off = millis_now;
+                    temp_when_switched_off = current_temperature;
                     digitalWrite(RELAY_PIN, 0);
                 }
             }
         }
 
-        millis_now = millis();
         if (send_report)
         {
-            sendReport(temperature_to_report, relay_state, report_comment, &sensor_data);
+            sendReport(temperature_to_report, switch_temperature, relay_state, report_comment, &sensor_data);
             millis_at_last_report = millis_now;
         }
         else if ((millis_now - millis_at_last_report) > (persistent_data.max_time_between_reports * 1000))
@@ -268,7 +423,7 @@ void loop()
                         millis_now, millis_at_last_report, persistent_data.max_time_between_reports);
             DOPRINT  ("reporting because: ");
             DOPRINTLN(report_text);
-            sendReport(temperature_to_report, relay_state, report_text, &sensor_data);
+            sendReport(temperature_to_report, switch_temperature, relay_state, report_text, &sensor_data);
             millis_at_last_report = millis_now;
         }
 

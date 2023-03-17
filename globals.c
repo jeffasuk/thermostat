@@ -12,8 +12,8 @@ char magic_tag[4] = "thm";    // To indicate that we've written to EEPROM, so it
 float current_temperature = IMPOSSIBLE_TEMPERATURE;
 SENSOR_DATA sensor_data = {0};
 
-// -1 means "unknown"
-int8_t relay_state = -1;
+// 0 means "off", which matches the start-up hardware state
+int8_t relay_state = 0;
 
 uint8_t in_setup_mode = 0;
 
