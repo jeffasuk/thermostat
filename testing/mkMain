@@ -9,7 +9,7 @@ sed -n -e '/^static[^(]*$/ p' \
        -e '/^static int8_t assessRelayState/,/^}$/ p' \
        -e '/^float normalizeTemperature/,/^}$/ p' \
        -e '/^static void setIfImpossible/,/^}$/ p' \
-       ../thermoaverage.ino >>sim.cpp
+       ../thermostat.ino >>sim.cpp
 
 cat <<EnD >globals.h
 #include <iostream>
