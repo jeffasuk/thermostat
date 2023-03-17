@@ -1,0 +1,23 @@
+#!/usr/bin/bash
+
+# extract assessRelayStateAverage, wrap it in a main() that reads something on stdin and
+# echoes a new relay state
+
+cp simwrapper.c sim.cpp
+sed -n -e '/^static[^(]*$/ p' \
+       -e '/^#define /p' \
+       -e '/^static int8_t assessRelayState/,/^}$/ p' \
+       -e '/^float normalizeTemperature/,/^}$/ p' \
+       -e '/^static void setIfImpossible/,/^}$/ p' \
+       ../thermoaverage.ino >>sim.cpp
+
+cat <<EnD >globals.h
+#include <iostream>
+enum RELAY_STATE {POWER_OFF, POWER_ON};
+static int8_t assessRelayState(int8_t pre_relay_state);
+float normalizeTemperature(float temperature);
+EnD
+grep -v -e 'Arduino.h' -e 'DOPRINT' ../globals.h >>globals.h
+cp ../globals.c globals.cpp
+
+g++ -w -fpermissive -I $PWD -o /tmp/sim sim.cpp globals.cpp

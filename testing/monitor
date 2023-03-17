@@ -1,0 +1,13 @@
+fnam=${1:-log}
+while sleep 1
+do
+    tmp=$(<temperature)
+    st=$(<state)
+    if test $st = ON
+    then
+        col=1
+    else
+        col=3
+    fi
+    echo $tmp $col >> $fnam
+done

@@ -1,0 +1,14 @@
+#!/usr/bin/bash
+# Read a log file generated from the monitor script.
+# Pass that to gnuplot,
+#  which will generate a PNG image on stdout.
+# The line's colour shows whether power was on or off at the time.
+{ cat <<EnD
+    unset colorbox
+    unset key
+    set term png
+    set grid
+EnD
+echo 'plot "< cat -" using 1:2:3 with lines lc variable'
+nl
+} | gnuplot

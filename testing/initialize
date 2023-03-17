@@ -1,0 +1,11 @@
+set -ue
+mode=$1
+echo $mode >mode
+echo OFF >state
+echo 12 >target_temperature 
+if test $mode = cooling
+then
+    echo 12.5 >temperature
+else
+    echo 11.5 >temperature
+fi
