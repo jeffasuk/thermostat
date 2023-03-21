@@ -15,7 +15,6 @@
 static float previous_desired_temperature = IMPOSSIBLE_TEMPERATURE;
 static uint8_t previous_mode = 99;  // matches neither of the valid mode values
 static int8_t temperature_changing = 0;    // flag
-static uint8_t done_cycle = 0;
 
 enum RELAY_STATE {POWER_OFF, POWER_ON};
 const char *powerStateName[] = {"OFF", "ON"}; // for debug and reporting
@@ -27,18 +26,15 @@ static uint32_t time_when_switched_off;
 static float temp_when_switched_off;
 static uint32_t     millis_at_last_report = 0;
 static float        previous_temperature = IMPOSSIBLE_TEMPERATURE;     // for detecting direction change
+static float        previous_max_discrepancy_down = persistent_data.max_discrepancy_down;
+static float        previous_max_discrepancy_up = persistent_data.max_discrepancy_up;
 
 // rotating history of discrepancies from switch temperature
-#define HISTORY_LENGTH  5
-static float past_max[HISTORY_LENGTH] = {0};
-static float past_min[HISTORY_LENGTH] = {0};
-static uint8_t max_history_index = HISTORY_LENGTH-1;
-static uint8_t min_history_index = HISTORY_LENGTH-1;
+#define HISTORY_LENGTH  10  // must be even number, to catch equal number of peaks and troughs
+static float past_peaks_and_troughs[HISTORY_LENGTH] = {0};
+static uint8_t history_index = HISTORY_LENGTH-1;
 static float min_temperature = IMPOSSIBLE_TEMPERATURE;
 static float max_temperature = IMPOSSIBLE_TEMPERATURE;
-static float switch_temperature = IMPOSSIBLE_TEMPERATURE;
-static float max_discrepancy_down = 2.0;
-static float max_discrepancy_up = 2.0;
 
 /* NB The terms "up" and "down" refer to the direction in which the power operates, so "up" means
    increasing temperature when heating, but decreasing temperature when cooling.
@@ -86,6 +82,7 @@ static int assessRelayStateSimple(int pre_relay_state)
 static int8_t assessRelayState(int8_t pre_relay_state)
 {
     uint8_t switched = 0;
+    uint8_t revert_to_startup_algorithm = 0;
     int8_t new_relay_state = pre_relay_state;
 
     setIfImpossible(&switch_temperature, persistent_data.desired_temperature);
@@ -96,8 +93,6 @@ static int8_t assessRelayState(int8_t pre_relay_state)
         if (pre_relay_state == POWER_ON)
         {
             // too warm for power on, so switch off
-            // record discrepancy of min temperature up to this point
-            done_cycle = !done_cycle;
             new_relay_state = POWER_OFF;
             switched = 1;
         }
@@ -107,66 +102,75 @@ static int8_t assessRelayState(int8_t pre_relay_state)
         if (pre_relay_state == POWER_OFF)
         {
             // too cool for power off, so switch on
-            // record discrepancy of max temperature up to this point
-            done_cycle = !done_cycle;
             new_relay_state = POWER_ON;
             switched = 1;
         }
     }
     if (switched)
     {
+        float diff;
         if ( (new_relay_state == POWER_OFF && persistent_data.mode == HEATING)
           || (new_relay_state == POWER_ON  && persistent_data.mode == COOLING)
             )
         {
             // just switched heating off or cooling on, so we're heading for a temperature peak
             // record the temperature discrepancy at the preceding temperature trough...
-            min_history_index = (min_history_index + 1) % HISTORY_LENGTH;
-            past_min[min_history_index] = min_temperature - switch_temperature;
+            diff = min_temperature - switch_temperature;
+            revert_to_startup_algorithm = abs(diff) > persistent_data.max_discrepancy_down;
             // ... and start recording max temperature in order to capture level of next temperature peak
             max_temperature = current_temperature;
         }
         else  // must have just switched heating on or cooling off, so we're heading for a temperature trough
         {
             // record the temperature discrepancy at the preceding temperature peak...
-            max_history_index = (max_history_index + 1) % HISTORY_LENGTH;
-            past_max[max_history_index] = max_temperature - switch_temperature;
+            diff = max_temperature - switch_temperature;
+            revert_to_startup_algorithm = abs(diff) > persistent_data.max_discrepancy_up;
             // ... and start recording min temperature in order to capture level of next temperature trough
             min_temperature = current_temperature;
         }
+        history_index = (history_index + 1) % HISTORY_LENGTH;
+        past_peaks_and_troughs[history_index] = diff;
     }
 
     max_temperature = max(max_temperature, current_temperature);
     min_temperature = min(min_temperature, current_temperature);
 
-    if (     (past_min[min_history_index] > 0) || (past_min[min_history_index] < -max_discrepancy_down)
-          || (past_max[max_history_index] < 0) || (past_max[max_history_index] > max_discrepancy_up))
+    if (revert_to_startup_algorithm)
     {
-        // a discrepancy is outside the range we can comfortably handle without ringing
+        // latest discrepancy is outside the range we can comfortably handle without ringing
         // so reset to start-up state
         DOPRINTLN("Reverting to start-up switching");
-        max_history_index = min_history_index = HISTORY_LENGTH-1;
+        history_index = HISTORY_LENGTH-1;
         for (int i = 0; i < HISTORY_LENGTH; ++i)
         {
-            past_min[i] = past_max[i] = 0.0;
+            past_peaks_and_troughs[i] = 0.0;
         }
         switch_temperature = persistent_data.desired_temperature;
     }
 
-    if (switched && done_cycle)
+    if (switched)
     {
-        // we've done an equal number of on/off events, and we've just switched,
-        // so assess performance
+        // we've just switched, so assess performance
         float average_discrepancy = 0;
+        float min_val = past_peaks_and_troughs[0];
+        float max_val = past_peaks_and_troughs[0];
         for (int i = 0; i < HISTORY_LENGTH; ++i)
         {
-            average_discrepancy += past_min[i] + past_max[i];
+            average_discrepancy += past_peaks_and_troughs[i];
+            min_val = min(min_val, past_peaks_and_troughs[i]);
+            max_val = max(max_val, past_peaks_and_troughs[i]);
         }
-        average_discrepancy /= HISTORY_LENGTH * 2;
+        // ignore the most extreme min and max values, to filter out extreme events.
+        average_discrepancy -= min_val + max_val;
+        average_discrepancy /= HISTORY_LENGTH - 2;
         DOPRINT("average discrepancy over ");
         DOPRINT(HISTORY_LENGTH);
-        DOPRINT(" cycles: ");
-        DOPRINTLN(average_discrepancy);
+        DOPRINT(" peaks/troughs: ");
+        DOPRINT(average_discrepancy);
+        DOPRINT(" Ignoring ");
+        DOPRINT(min_val);
+        DOPRINT(" and ");
+        DOPRINTLN(max_val);
         // adjust switch point
         switch_temperature = persistent_data.desired_temperature - average_discrepancy;
         DOPRINT  ("New switch temperature: ");
@@ -280,7 +284,7 @@ void loop()
         DOPRINT  (powerStateName[relay_state]);
         DOPRINT  (" at ");
         DOPRINT  (current_temperature);
-        DOPRINT  ("deg. ");
+        DOPRINT  ("deg ");
         switch(temperature_changing)
         {
             case 0:
@@ -293,24 +297,28 @@ void loop()
             case -1:
                 {
                     DOPRINT  ("getting ");
-                    DOPRINT  (temperature_changing < 0 ? "cooler by " : "warmer by ");
+                    DOPRINT  ((temperature_changing < 0) ? "cooler by " : "warmer by ");
                     DOPRINT  (abs(previous_temperature - current_temperature));
                 }
                 break;
         }
-        DOPRINT  ("   target ");
+        DOPRINT  (", target ");
         DOPRINT  (persistent_data.desired_temperature);
         DOPRINT  ("   switching at ");
         DOPRINT  (switch_temperature);
-        DOPRINT  (" for ");
+        DOPRINT  ("(-"); DOPRINT(persistent_data.max_discrepancy_down);
+        DOPRINT  (","); DOPRINT(persistent_data.max_discrepancy_up);
+        DOPRINT  (") for ");
         DOPRINTLN(persistent_data.mode == HEATING ? "heating" : "cooling");
 #endif
         if (previous_temperature == IMPOSSIBLE_TEMPERATURE  // start-up state
             || persistent_data.desired_temperature != previous_desired_temperature // new desired temperature
             || persistent_data.mode != previous_mode // new mode
+            || persistent_data.max_discrepancy_down != previous_max_discrepancy_down
+            || persistent_data.max_discrepancy_up != previous_max_discrepancy_up
           )
         {
-            // first time after reset or change in settings, so report
+            // first time after reset or significant change in settings, so report
             // current temperature and use it to decide action
             send_report = 1;
             if (previous_temperature == IMPOSSIBLE_TEMPERATURE)
@@ -324,7 +332,7 @@ void loop()
                 DOPRINTLN("report because of change in settings");
                 if (switch_temperature != IMPOSSIBLE_TEMPERATURE)
                 {
-                    switch_temperature = persistent_data.desired_temperature + switch_temperature - previous_desired_temperature;
+                    switch_temperature += persistent_data.desired_temperature - previous_desired_temperature;
                     DOPRINT  ("New switch temperature (settings change): ");
                     DOPRINTLN(switch_temperature);
                     DOPRINTLN("report because of change in settings");
@@ -333,6 +341,8 @@ void loop()
             previous_desired_temperature = persistent_data.desired_temperature;
             previous_mode = persistent_data.mode;
             previous_temperature = current_temperature;
+            previous_max_discrepancy_down = persistent_data.max_discrepancy_down;
+            previous_max_discrepancy_up = persistent_data.max_discrepancy_up;
             temperature_to_report = current_temperature;
             do_check = 1;
         }
@@ -340,7 +350,8 @@ void loop()
         {
             // large enough change, so use for assessing direction of travel, store the new temperature as new previous value,
             // and indicate that we need to check whether power should be switched
-            char *change_name = NULL;
+            const char *change_name;
+            change_name = NULL;
             if (previous_temperature < current_temperature)
             {
                 // getting warmer

@@ -23,15 +23,18 @@
 #
 # (The above description works in Apache2. A different approach may be needed on other web servers.)
 
-# example QUERY_STRING: des_temp=11&mode=0&precision=0.20&maxreporttime=12
+# example QUERY_STRING for setting values: des_temp=11&mode=0&precision=0.20&maxreporttime=12&maxdiscrepdown=2&maxdiscrepup=2
 #   des_temp=11
 #   mode=0
 #   precision=0.20
 #   maxreporttime=12
+#   maxdiscrepdown=2
+#   maxdiscrepup=2
 
 if test ! -f status
 then
     # create initial dummy status file
+    # only the fields shown in the example QUERY_STRING above can be set via the web interface
     cat <<EnD >status
 <status>
  <tmp id="28FF6133811605E4">12.00</tmp>
@@ -39,6 +42,9 @@ then
  <des>11.00</des>
  <prec>0.20</prec>
  <mode>heating</mode>
+ <switch>12</switch>
+ <maxdiscrepdown>2</maxdiscrepdown>
+ <maxdiscrepup>2</maxdiscrepup>
  <maxrep>120</maxrep>
 </status>
 EnD
@@ -54,8 +60,10 @@ awk -v $(echo $QUERY_STRING | sed 's/&/ -v /g') '
         }
     }
     /<des>/ {rep("des", des_temp)}
-    /<mode>/ {rep("mode", mode == "0" ? "heating" : "cooling" )}
+    /<mode>/ && mode != "" {rep("mode", mode == "0" ? "heating" : "cooling" )}
     /<prec>/ {rep("prec", precision)}
+    /<maxdiscrepdown>/ {rep("maxdiscrepdown", maxdiscrepdown)}
+    /<maxdiscrepup>/ {rep("maxdiscrepup", maxdiscrepup)}
     /<maxrep>/ {rep("maxrep", maxreporttime)}
     {print}
 ' status >status.new && mv status.new status

@@ -4,12 +4,13 @@
 */
 #include "globals.h"
 
-char magic_tag[4] = "thm";    // To indicate that we've written to EEPROM, so it's OK to use the values.
+char magic_tag[4] = "v11";    // To indicate that we've written to EEPROM, so it's OK to use the values.
             // MUST change this if the format/structure of persistent data has changed, which
             // will force unit into setup mode, with its own WiFi access point
 
 
 float current_temperature = IMPOSSIBLE_TEMPERATURE;
+float switch_temperature = IMPOSSIBLE_TEMPERATURE;
 SENSOR_DATA sensor_data = {0};
 
 // 0 means "off", which matches the start-up hardware state
@@ -34,6 +35,7 @@ struct PERSISTENT_DATA persistent_data = {
     20,     // max_time_between_reports, seconds
     20.0,   // desired temperature
     0.2,    // precision, used for enhanced stability when looking at temperature changes, esp. for change of direction
+    2.0, 2.0,   // max discrepancy values for scope of heuristic
     HEATING, // mode:  heating or cooling
 };
 
@@ -45,6 +47,8 @@ PERSISTENT_INFO persistents[] = {
     {PERS_INT8,   "rot",                        &persistent_data.rot},
     {PERS_FLOAT,  "desired_temperature",        &persistent_data.desired_temperature},
     {PERS_FLOAT,  "precision",                  &persistent_data.precision},
+    {PERS_FLOAT,  "max_discrepancy_down",       &persistent_data.max_discrepancy_down},
+    {PERS_FLOAT,  "max_discrepancy_up",         &persistent_data.max_discrepancy_up},
     {PERS_UINT8,  "mode",                       &persistent_data.mode},
     {0}
 };

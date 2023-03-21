@@ -39,6 +39,7 @@ int main(int argc, char **argv)
     FILE *state_file;
     int relay_state, prev_relay_state = -999;
     char state_buf[20];
+    float prev_switch_temperature = switch_temperature + 1; // ensure change
     state_file = fopen("state", "r");
     fscanf(state_file, "%s", state_buf);
     fclose(state_file);
@@ -63,6 +64,12 @@ int main(int argc, char **argv)
             fprintf(state_file, "%s\n", state_name[relay_state]);
             fclose(state_file);
             printf("Switched %s\n", state_name[relay_state]);
+        }
+        if (prev_switch_temperature != switch_temperature)
+        {
+            state_file = fopen("switch", "w");
+            fprintf(state_file, "%f\n", switch_temperature);
+            fclose(state_file);
         }
         usleep(1000000);
     }

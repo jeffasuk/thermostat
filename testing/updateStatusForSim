@@ -1,0 +1,19 @@
+while sleep 1
+do
+    sw=$(<switch)
+    tmp=$(<temperature)
+    des=$(<target_temperature)
+    statestr=$(<state)
+    if test $statestr = ON
+    then
+        state=1
+    else
+        state=0
+    fi
+    sed -i \
+        -e '/<switch>/ s/>[0-9.]*</>'$sw'</' \
+        -e '/<tmp / s/>[0-9.]*</>'$tmp'</' \
+        -e '/<state>/ s/>[0-9.]*</>'$state'</' \
+        -e '/<des>/ s/>[0-9.]*</>'$des'</' \
+    /var/www/html/status
+done

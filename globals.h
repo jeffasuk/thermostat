@@ -50,6 +50,7 @@ typedef struct {
 #define IMPOSSIBLE_TEMPERATURE  (-999999)
 
 extern float current_temperature;
+extern float switch_temperature;
 extern SENSOR_DATA sensor_data;
 extern int8_t relay_state;
 extern uint8_t in_setup_mode;
@@ -71,6 +72,8 @@ struct PERSISTENT_DATA {    // this structure can be stored in EEPROM
     uint32_t max_time_between_reports;
     float   desired_temperature;
     float   precision;
+    float   max_discrepancy_down;
+    float   max_discrepancy_up;
     uint8_t mode;
 };
 extern struct PERSISTENT_DATA persistent_data;
