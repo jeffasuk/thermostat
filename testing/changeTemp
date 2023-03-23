@@ -1,0 +1,11 @@
+#!/usr/bin/bash
+
+change=+0.1
+while echo -n $(<temperature) 'Next: '; read new_change
+do
+    test -z "$new_change" || change=$new_change
+    : ${new_change:=$change}
+    tmp=$(<temperature)
+    tmp=$(echo 'scale=2;' $tmp $change | bc)
+    echo $tmp >temperature
+done

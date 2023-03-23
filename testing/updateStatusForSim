@@ -4,6 +4,7 @@ do
     tmp=$(<temperature)
     des=$(<target_temperature)
     statestr=$(<state)
+    mode=$(<mode)
     if test $statestr = ON
     then
         state=1
@@ -14,6 +15,7 @@ do
         -e '/<switch>/ s/>[0-9.]*</>'$sw'</' \
         -e '/<tmp / s/>[0-9.]*</>'$tmp'</' \
         -e '/<state>/ s/>[0-9.]*</>'$state'</' \
+        -e '/<mode>/ s/>[^<]*</>'$mode'</' \
         -e '/<des>/ s/>[0-9.]*</>'$des'</' \
     /var/www/html/status
 done

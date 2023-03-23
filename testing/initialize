@@ -6,7 +6,7 @@ echo 15 >ambient
 if test $mode = cooling
 then
     echo 10 >target_temperature 
-    echo 12 >temperature
+    echo 11 >temperature
 else
     echo 20 >target_temperature 
     echo 19 >temperature

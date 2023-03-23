@@ -14,13 +14,14 @@ import sys
 import time
 time_acceleration = float(os.environ.get('TIME_ACCELERATION', 1))
 temperature_filename = 'temperature'
+internal_filename = 'internal'
 ambient_filename = 'ambient'
 state_filename = 'state'
 min_temp = 5
 max_temp = 65
 sleep_time = 0.1
-heat_delta_ratio  = 0.001     # proportion per second
-cool_delta_ratio  = 0.05    # proportion per second
+heat_delta_ratio  = 0.2       # proportion per second
+cool_delta_ratio  = 0.02    # proportion per second
 transfer_delta_ratio  = 0.05     # proportion per second
 
 mode = 'heating'    # or cooling
@@ -36,6 +37,11 @@ print(ambient, internal_temp, temp)
 n = 0
 while True:
     power_state = open(state_filename).read().strip()
+    try:
+        internal_temp = float(open(internal_filename).read().strip())
+        os.remove(internal_filename)
+    except:
+        pass
     if power_state == 'OFF':
         internal_temp += cool_delta_ratio * sleep_time * (ambient - internal_temp)
     else:

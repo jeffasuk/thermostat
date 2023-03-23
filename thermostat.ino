@@ -14,20 +14,20 @@
 // for detecting change in desired temperature and other settings
 static float previous_desired_temperature = IMPOSSIBLE_TEMPERATURE;
 static uint8_t previous_mode = 99;  // matches neither of the valid mode values
-static int8_t temperature_changing = 0;    // flag
+static int8_t temperature_changing = 0;    // -1 = going down,  0 = not changing,  +1 = going up
 
 enum RELAY_STATE {POWER_OFF, POWER_ON};
 const char *powerStateName[] = {"OFF", "ON"}; // for debug and reporting
 
-static uint32_t    millis_now;
-static uint32_t time_when_switched_on;
-static float temp_when_switched_on;
-static uint32_t time_when_switched_off;
-static float temp_when_switched_off;
+static uint32_t     millis_now;
 static uint32_t     millis_at_last_report = 0;
 static float        previous_temperature = IMPOSSIBLE_TEMPERATURE;     // for detecting direction change
+
+// for detecting settings changed
 static float        previous_max_discrepancy_down = persistent_data.max_discrepancy_down;
 static float        previous_max_discrepancy_up = persistent_data.max_discrepancy_up;
+
+static float    pending_switch_temperature  = IMPOSSIBLE_TEMPERATURE;
 
 // rotating history of discrepancies from switch temperature
 #define HISTORY_LENGTH  10  // must be even number, to catch equal number of peaks and troughs
@@ -117,6 +117,13 @@ static int8_t assessRelayState(int8_t pre_relay_state)
             // record the temperature discrepancy at the preceding temperature trough...
             diff = min_temperature - switch_temperature;
             revert_to_startup_algorithm = abs(diff) > persistent_data.max_discrepancy_down;
+            if (revert_to_startup_algorithm)
+            {
+                DOPRINT("Reverting to start-up switching. min = ");
+                DOPRINT(min_temperature);
+                DOPRINT(" switch = ");
+                DOPRINTLN(switch_temperature);
+            }
             // ... and start recording max temperature in order to capture level of next temperature peak
             max_temperature = current_temperature;
         }
@@ -125,6 +132,13 @@ static int8_t assessRelayState(int8_t pre_relay_state)
             // record the temperature discrepancy at the preceding temperature peak...
             diff = max_temperature - switch_temperature;
             revert_to_startup_algorithm = abs(diff) > persistent_data.max_discrepancy_up;
+            if (revert_to_startup_algorithm)
+            {
+                DOPRINT("Reverting to start-up switching. max = ");
+                DOPRINT(max_temperature);
+                DOPRINT(" switch = ");
+                DOPRINTLN(switch_temperature);
+            }
             // ... and start recording min temperature in order to capture level of next temperature trough
             min_temperature = current_temperature;
         }
@@ -139,7 +153,6 @@ static int8_t assessRelayState(int8_t pre_relay_state)
     {
         // latest discrepancy is outside the range we can comfortably handle without ringing
         // so reset to start-up state
-        DOPRINTLN("Reverting to start-up switching");
         history_index = HISTORY_LENGTH-1;
         for (int i = 0; i < HISTORY_LENGTH; ++i)
         {
@@ -148,12 +161,13 @@ static int8_t assessRelayState(int8_t pre_relay_state)
         switch_temperature = persistent_data.desired_temperature;
     }
 
-    if (switched)
+    if (switched && new_relay_state == POWER_ON)
     {
-        // we've just switched, so assess performance
+        // we're about to switch on, so assess performance
         float average_discrepancy = 0;
         float min_val = past_peaks_and_troughs[0];
         float max_val = past_peaks_and_troughs[0];
+        float new_switch_temperature;
         for (int i = 0; i < HISTORY_LENGTH; ++i)
         {
             average_discrepancy += past_peaks_and_troughs[i];
@@ -167,13 +181,32 @@ static int8_t assessRelayState(int8_t pre_relay_state)
         DOPRINT(HISTORY_LENGTH);
         DOPRINT(" peaks/troughs: ");
         DOPRINT(average_discrepancy);
-        DOPRINT(" Ignoring ");
+        DOPRINT(" Ignoring extreme values ");
         DOPRINT(min_val);
         DOPRINT(" and ");
         DOPRINTLN(max_val);
         // adjust switch point
-        switch_temperature = persistent_data.desired_temperature - average_discrepancy;
-        DOPRINT  ("New switch temperature: ");
+        new_switch_temperature = persistent_data.desired_temperature - average_discrepancy;
+        if (new_switch_temperature != switch_temperature)
+        {
+            if (normalizeTemperature(new_switch_temperature) < normalizeTemperature(switch_temperature))
+            {
+                pending_switch_temperature = new_switch_temperature;
+                DOPRINT  ("Set pending switch temperature: ");
+            }
+            else
+            {
+                switch_temperature = new_switch_temperature;
+                DOPRINT  ("New switch temperature: ");
+            }
+            DOPRINTLN(new_switch_temperature);
+        }
+    }
+    if (switched && new_relay_state == POWER_OFF && pending_switch_temperature != IMPOSSIBLE_TEMPERATURE)
+    {
+        switch_temperature = pending_switch_temperature;
+        pending_switch_temperature = IMPOSSIBLE_TEMPERATURE;
+        DOPRINT("Apply pending switch-on temperature: ");
         DOPRINTLN(switch_temperature);
     }
     return new_relay_state;
@@ -404,8 +437,6 @@ void loop()
                     DOPRINTLN("report because turning on");
                     DOPRINTLN("turn on");
                     relay_state = POWER_ON;
-                    time_when_switched_on = millis_now;
-                    temp_when_switched_on = current_temperature;
                     digitalWrite(RELAY_PIN, 1);
                 }
                 else
@@ -415,8 +446,6 @@ void loop()
                     DOPRINTLN("report because turning off");
                     DOPRINTLN("turn off");
                     relay_state = POWER_OFF;
-                    time_when_switched_off = millis_now;
-                    temp_when_switched_off = current_temperature;
                     digitalWrite(RELAY_PIN, 0);
                 }
             }

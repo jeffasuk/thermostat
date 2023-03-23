@@ -1,3 +1,4 @@
+#include <sys/time.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
@@ -46,6 +47,9 @@ int main(int argc, char **argv)
     printf("'%s'\n", state_buf);
     while (1)
     {
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+
         current_temperature = readFloatFromFile("temperature");
         persistent_data.desired_temperature = readFloatFromFile("target_temperature");
         // default to heating
@@ -63,7 +67,7 @@ int main(int argc, char **argv)
             state_file = fopen("state", "w");
             fprintf(state_file, "%s\n", state_name[relay_state]);
             fclose(state_file);
-            printf("Switched %s\n", state_name[relay_state]);
+            printf("%d.%6.6d: Switched %s\n", tv.tv_sec, tv.tv_usec, state_name[relay_state]);
         }
         if (prev_switch_temperature != switch_temperature)
         {
