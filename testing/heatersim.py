@@ -20,9 +20,10 @@ state_filename = 'state'
 min_temp = 5
 max_temp = 65
 sleep_time = 0.1
-heat_delta_ratio  = 0.2       # proportion per second
-cool_delta_ratio  = 0.02    # proportion per second
-transfer_delta_ratio  = 0.05     # proportion per second
+heat_rate         = 3       # fixed amount of degrees of heat per iteration
+cool_delta_ratio  = 0.1     # proportion per second by which internal temp approaches ambient temp
+transfer_delta_ratio  = 0.005     # proportion per second by which temp approaches internal temp
+switch_delay = 3
 
 mode = 'heating'    # or cooling
 
@@ -35,8 +36,24 @@ internal_temp = ambient
 
 print(ambient, internal_temp, temp)
 n = 0
+power_state = open(state_filename).read().strip()
+change_at = pending_power_state = next_power_state = None
+
 while True:
-    power_state = open(state_filename).read().strip()
+    next_power_state = open(state_filename).read().strip()
+    if next_power_state != power_state:
+        if next_power_state != pending_power_state:
+            # change after a delay
+            change_at = time.time() + switch_delay / time_acceleration
+            pending_power_state = next_power_state
+    elif next_power_state != pending_power_state:
+        # changing back to previous state before pending state got applied
+        change_at = pending_power_state = None
+
+    if change_at and time.time() >= change_at:
+        power_state = pending_power_state
+        change_at = pending_power_state = None
+
     try:
         internal_temp = float(open(internal_filename).read().strip())
         os.remove(internal_filename)
@@ -46,10 +63,9 @@ while True:
         internal_temp += cool_delta_ratio * sleep_time * (ambient - internal_temp)
     else:
         if mode == 'heating':
-            change = heat_delta_ratio * sleep_time * (max_temp - internal_temp)
+            internal_temp = min(max_temp, internal_temp + heat_rate * sleep_time)
         else:
-            change = heat_delta_ratio * sleep_time * (min_temp - internal_temp)
-        internal_temp += change
+            internal_temp = max(min_temp, internal_temp - heat_rate * sleep_time)
     temp = float(open(temperature_filename).read())
     diff = internal_temp - temp 
     if diff != 0:
@@ -59,4 +75,4 @@ while True:
     time.sleep(sleep_time / time_acceleration)
     n += 1
     if (n % 10) == 0:
-        print(ambient, internal_temp, temp)
+        print(f'{power_state}({pending_power_state}) ambient: {ambient} internal: {internal_temp} current: {temp}')

@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <sys/time.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -35,12 +36,25 @@ float readFloatFromFile(char *fname)
 
 static char *state_name[2] = {"OFF", "ON"};
 
+static uint32_t millis_now;
+static time_t   sec_at_start;
+
 int main(int argc, char **argv)
 {
     FILE *state_file;
     int relay_state, prev_relay_state = -999;
     char state_buf[20];
+    float time_acceleration = 1.0;
     float prev_switch_temperature = switch_temperature + 1; // ensure change
+    {
+        const char* s = getenv("TIME_ACCELERATION");
+        if (s)
+        {
+            sscanf(s, "%f", &time_acceleration);
+            printf("Accelerate at x %f\n", time_acceleration);
+        }
+    }
+    time(&sec_at_start);
     state_file = fopen("state", "r");
     fscanf(state_file, "%s", state_buf);
     fclose(state_file);
@@ -61,6 +75,7 @@ int main(int argc, char **argv)
         }
         persistent_data.mode = (state_buf[0] == 'c') ? COOLING : HEATING;
         prev_relay_state = relay_state;
+        millis_now = time_acceleration * ((tv.tv_sec - sec_at_start) * 1000000 + tv.tv_usec) / 1000;
         relay_state = assessRelayState(relay_state);
         if (relay_state != prev_relay_state)
         {
@@ -75,7 +90,7 @@ int main(int argc, char **argv)
             fprintf(state_file, "%f\n", switch_temperature);
             fclose(state_file);
         }
-        usleep(1000000);
+        usleep(1000000/ time_acceleration);
     }
     return 0;
 }

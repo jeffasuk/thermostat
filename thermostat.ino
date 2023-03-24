@@ -78,6 +78,87 @@ static int assessRelayStateSimple(int pre_relay_state)
     return POWER_OFF;
 }
 #endif
+static void handlePeaksAndTroughs(int8_t new_relay_state, uint8_t *revert_to_startup_algorithm)
+{
+    float diff;
+    if ( (new_relay_state == POWER_OFF && persistent_data.mode == HEATING)
+      || (new_relay_state == POWER_ON  && persistent_data.mode == COOLING)
+        )
+    {
+        // just switched heating off or cooling on, so we're heading for a temperature peak
+        // record the temperature discrepancy at the preceding temperature trough...
+        diff = min_temperature - switch_temperature;
+        *revert_to_startup_algorithm = abs(diff) > persistent_data.max_discrepancy_down;
+        if (*revert_to_startup_algorithm)
+        {
+            DOPRINT("Reverting to start-up switching. min = ");
+            DOPRINT(min_temperature);
+            DOPRINT(" switch = ");
+            DOPRINTLN(switch_temperature);
+        }
+        // ... and start recording max temperature in order to capture level of next temperature peak
+        max_temperature = current_temperature;
+    }
+    else  // must have just switched heating on or cooling off, so we're heading for a temperature trough
+    {
+        // record the temperature discrepancy at the preceding temperature peak...
+        diff = max_temperature - switch_temperature;
+        *revert_to_startup_algorithm = abs(diff) > persistent_data.max_discrepancy_up;
+        if (*revert_to_startup_algorithm)
+        {
+            DOPRINT("Reverting to start-up switching. max = ");
+            DOPRINT(max_temperature);
+            DOPRINT(" switch = ");
+            DOPRINTLN(switch_temperature);
+        }
+        // ... and start recording min temperature in order to capture level of next temperature trough
+        min_temperature = current_temperature;
+    }
+    history_index = (history_index + 1) % HISTORY_LENGTH;
+    past_peaks_and_troughs[history_index] = diff;
+}
+
+static void assessPerformance()
+{
+    // we're about to switch on, so assess performance
+    float average_discrepancy = 0;
+    float min_val = past_peaks_and_troughs[0];
+    float max_val = past_peaks_and_troughs[0];
+    float new_switch_temperature;
+    for (int i = 0; i < HISTORY_LENGTH; ++i)
+    {
+        average_discrepancy += past_peaks_and_troughs[i];
+        min_val = min(min_val, past_peaks_and_troughs[i]);
+        max_val = max(max_val, past_peaks_and_troughs[i]);
+    }
+    // ignore the most extreme min and max values, to filter out extreme events.
+    average_discrepancy -= min_val + max_val;
+    average_discrepancy /= HISTORY_LENGTH - 2;
+    DOPRINT("average discrepancy over ");
+    DOPRINT(HISTORY_LENGTH);
+    DOPRINT(" peaks/troughs: ");
+    DOPRINT(average_discrepancy);
+    DOPRINT(" Ignoring extreme values ");
+    DOPRINT(min_val);
+    DOPRINT(" and ");
+    DOPRINTLN(max_val);
+    // adjust switch point
+    new_switch_temperature = persistent_data.desired_temperature - average_discrepancy;
+    if (new_switch_temperature != switch_temperature)
+    {
+        if (normalizeTemperature(new_switch_temperature) < normalizeTemperature(switch_temperature))
+        {
+            pending_switch_temperature = new_switch_temperature;
+            DOPRINT  ("Set pending switch temperature: ");
+        }
+        else
+        {
+            switch_temperature = new_switch_temperature;
+            DOPRINT  ("New switch temperature: ");
+        }
+        DOPRINTLN(new_switch_temperature);
+    }
+}
 
 static int8_t assessRelayState(int8_t pre_relay_state)
 {
@@ -106,44 +187,10 @@ static int8_t assessRelayState(int8_t pre_relay_state)
             switched = 1;
         }
     }
+
     if (switched)
     {
-        float diff;
-        if ( (new_relay_state == POWER_OFF && persistent_data.mode == HEATING)
-          || (new_relay_state == POWER_ON  && persistent_data.mode == COOLING)
-            )
-        {
-            // just switched heating off or cooling on, so we're heading for a temperature peak
-            // record the temperature discrepancy at the preceding temperature trough...
-            diff = min_temperature - switch_temperature;
-            revert_to_startup_algorithm = abs(diff) > persistent_data.max_discrepancy_down;
-            if (revert_to_startup_algorithm)
-            {
-                DOPRINT("Reverting to start-up switching. min = ");
-                DOPRINT(min_temperature);
-                DOPRINT(" switch = ");
-                DOPRINTLN(switch_temperature);
-            }
-            // ... and start recording max temperature in order to capture level of next temperature peak
-            max_temperature = current_temperature;
-        }
-        else  // must have just switched heating on or cooling off, so we're heading for a temperature trough
-        {
-            // record the temperature discrepancy at the preceding temperature peak...
-            diff = max_temperature - switch_temperature;
-            revert_to_startup_algorithm = abs(diff) > persistent_data.max_discrepancy_up;
-            if (revert_to_startup_algorithm)
-            {
-                DOPRINT("Reverting to start-up switching. max = ");
-                DOPRINT(max_temperature);
-                DOPRINT(" switch = ");
-                DOPRINTLN(switch_temperature);
-            }
-            // ... and start recording min temperature in order to capture level of next temperature trough
-            min_temperature = current_temperature;
-        }
-        history_index = (history_index + 1) % HISTORY_LENGTH;
-        past_peaks_and_troughs[history_index] = diff;
+        handlePeaksAndTroughs(new_relay_state, &revert_to_startup_algorithm);
     }
 
     max_temperature = max(max_temperature, current_temperature);
@@ -163,45 +210,9 @@ static int8_t assessRelayState(int8_t pre_relay_state)
 
     if (switched && new_relay_state == POWER_ON)
     {
-        // we're about to switch on, so assess performance
-        float average_discrepancy = 0;
-        float min_val = past_peaks_and_troughs[0];
-        float max_val = past_peaks_and_troughs[0];
-        float new_switch_temperature;
-        for (int i = 0; i < HISTORY_LENGTH; ++i)
-        {
-            average_discrepancy += past_peaks_and_troughs[i];
-            min_val = min(min_val, past_peaks_and_troughs[i]);
-            max_val = max(max_val, past_peaks_and_troughs[i]);
-        }
-        // ignore the most extreme min and max values, to filter out extreme events.
-        average_discrepancy -= min_val + max_val;
-        average_discrepancy /= HISTORY_LENGTH - 2;
-        DOPRINT("average discrepancy over ");
-        DOPRINT(HISTORY_LENGTH);
-        DOPRINT(" peaks/troughs: ");
-        DOPRINT(average_discrepancy);
-        DOPRINT(" Ignoring extreme values ");
-        DOPRINT(min_val);
-        DOPRINT(" and ");
-        DOPRINTLN(max_val);
-        // adjust switch point
-        new_switch_temperature = persistent_data.desired_temperature - average_discrepancy;
-        if (new_switch_temperature != switch_temperature)
-        {
-            if (normalizeTemperature(new_switch_temperature) < normalizeTemperature(switch_temperature))
-            {
-                pending_switch_temperature = new_switch_temperature;
-                DOPRINT  ("Set pending switch temperature: ");
-            }
-            else
-            {
-                switch_temperature = new_switch_temperature;
-                DOPRINT  ("New switch temperature: ");
-            }
-            DOPRINTLN(new_switch_temperature);
-        }
+        assessPerformance();
     }
+
     if (switched && new_relay_state == POWER_OFF && pending_switch_temperature != IMPOSSIBLE_TEMPERATURE)
     {
         switch_temperature = pending_switch_temperature;
@@ -211,7 +222,6 @@ static int8_t assessRelayState(int8_t pre_relay_state)
     }
     return new_relay_state;
 }
-
 
 /* this is called on power-up */
 void setup()
