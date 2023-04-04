@@ -1,10 +1,11 @@
 while sleep 1
 do
-    sw=$(<switch)
     tmp=$(<temperature)
     des=$(<target_temperature)
     statestr=$(<state)
     mode=$(<mode)
+    switch_offset_above=$(<switch_offset_above)
+    switch_offset_below=$(<switch_offset_below)
     if test $statestr = ON
     then
         state=1
@@ -12,10 +13,11 @@ do
         state=0
     fi
     sed -i \
-        -e '/<switch>/ s/>[0-9.]*</>'$sw'</' \
-        -e '/<tmp / s/>[0-9.]*</>'$tmp'</' \
-        -e '/<state>/ s/>[0-9.]*</>'$state'</' \
+        -e '/<tmp / s/>[^<]*</>'$tmp'</' \
+        -e '/<state>/ s/>[^<]*</>'$state'</' \
+        -e '/<switchoffsetabove>/ s/>[^<]*</>'$switch_offset_above'</' \
+        -e '/<switchoffsetbelow>/ s/>[^<]*</>'$switch_offset_below'</' \
         -e '/<mode>/ s/>[^<]*</>'$mode'</' \
-        -e '/<des>/ s/>[0-9.]*</>'$des'</' \
+        -e '/<des>/ s/>[^<]*</>'$des'</' \
     /var/www/html/status
 done

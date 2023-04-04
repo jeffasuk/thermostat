@@ -23,13 +23,13 @@
 #
 # (The above description works in Apache2. A different approach may be needed on other web servers.)
 
-# example QUERY_STRING for setting values: des_temp=11&mode=0&precision=0.20&maxreporttime=12&maxdiscrepdown=2&maxdiscrepup=2
+# example QUERY_STRING for setting values: des_temp=11&mode=0&precision=0.20&maxreporttime=12&switchoffsetabove=0.5&switchoffsetbelow=-0.8
 #   des_temp=11
 #   mode=0
 #   precision=0.20
 #   maxreporttime=12
-#   maxdiscrepdown=2
-#   maxdiscrepup=2
+#   switchoffsetabove=0.5
+#   switchoffsetbelow=-0.8
 
 if test ! -f status
 then
@@ -43,8 +43,8 @@ then
  <prec>0.20</prec>
  <mode>heating</mode>
  <switch>12</switch>
- <maxdiscrepdown>2</maxdiscrepdown>
- <maxdiscrepup>2</maxdiscrepup>
+ <switchoffsetabove>0.5</switchoffsetabove>
+ <switchoffsetbelow>-0.8</switchoffsetbelow>
  <maxrep>120</maxrep>
 </status>
 EnD
@@ -62,8 +62,8 @@ awk -v $(echo $QUERY_STRING | sed 's/&/ -v /g') '
     /<des>/ {rep("des", des_temp)}
     /<mode>/ && mode != "" {rep("mode", mode == "0" ? "heating" : "cooling" )}
     /<prec>/ {rep("prec", precision)}
-    /<maxdiscrepdown>/ {rep("maxdiscrepdown", maxdiscrepdown)}
-    /<maxdiscrepup>/ {rep("maxdiscrepup", maxdiscrepup)}
+    /<switchoffsetabove>/ {rep("switchoffsetabove", switchoffsetabove)}
+    /<switchoffsetbelow>/ {rep("switchoffsetbelow", switchoffsetbelow)}
     /<maxrep>/ {rep("maxrep", maxreporttime)}
     {print}
 ' status >status.new && mv status.new status

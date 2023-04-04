@@ -23,6 +23,5 @@ typedef enum {
 
 void readSensors(SENSOR_DATA *result);
 int readDsTemp(int start, TEMPERATURE_DATA *res);
-extern void generateSensorPage(String *page, SENSOR_DATA sensor_data);
 
 #endif  // _SENSORS_H

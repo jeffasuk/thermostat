@@ -1,7 +1,11 @@
 #!/usr/bin/python3
 # Generate c-file and matching .h file from a text file by appending \n and enclosing in double quotes.
-# It would be good to strip comments, both html and JavaScript, to reduce image size.
-# And maybe collapse white-space.
+# Strip comments, both html and JavaScript, and unnecessary white space, to reduce image size.
+# Replace all element IDs and variable and function names that are 4 or more characters long with shorter words.
+#   Take care with the above. Make sure that your don't use the same names for different purposes. This is
+#   why, for example, some variables are called <something>_val rather than just <something>, so as not
+#   to conflict with element IDs or input field names.
+# Collapse white-space in <head>.
 
 import hashlib
 import os
@@ -18,6 +22,9 @@ multi_newline_re = re.compile(r'\n\n+')
 hex_value_re = re.compile(r'\\x')
 escaped_quote_re = re.compile(r"\\'")
 backslash_n_re = re.compile(r'\\n')
+element_id_re = re.compile(r"\bid='?([\w]{4,})'?")
+var_re = re.compile(r'\bvar  *([\w]{4,})')
+func_re = re.compile(r'\bfunction  *([\w]{4,})')
 
 text = open(infilename).read()
 
@@ -30,6 +37,29 @@ text = escaped_quote_re.sub(r"\\\\'", text)
 text = backslash_n_re.sub(r"\\\\n", text)
 
 etag = hashlib.md5(text.encode('UTF8')).hexdigest()
+
+#print(text, file=open('/tmp/before', 'w'))
+for item_re, prefix in (
+            (element_id_re, 'e',),
+            (var_re, 'v',),
+            (func_re, 'f',),
+        ):
+    orig_names = set(item_re.findall(text))
+    for n, orig_name in enumerate(sorted(orig_names)):  # sorted is for debugging purposes, to compare successive runs
+        text = re.sub(rf'\b{orig_name}\b', f'{prefix}{n}', text)
+
+text = re.sub(' = ', '=', text)
+text = re.sub('^ ', '', text, flags=re.MULTILINE)
+
+# Strip newlines and unnecessary spaces around operators, separators and delimiters.
+# Dont strip *all* newlines as it breaks some of the HTML layout
+end_head_pos = text.find('</head>')
+# strip unnecessary spaces around operators, separators and delimiters
+head_sect = re.sub(' ?([-+/=<>,;:&?*]) ?', r'\1', text[:end_head_pos].replace('\n', ''))
+text = head_sect + text[end_head_pos:]
+
+text = text.strip()
+#print(text, file=open('/tmp/after', 'w'))
 
 with open(base + '_html.c', 'w') as f:
     f.write('char %s_etag[] = "%s";\nchar %s_html[] =\n' % (base, etag, base))

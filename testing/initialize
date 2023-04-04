@@ -9,5 +9,5 @@ then
     echo 11 >temperature
 else
     echo 20 >target_temperature 
-    echo 19 >temperature
+    echo 19.5 >temperature
 fi
