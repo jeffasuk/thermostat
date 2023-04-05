@@ -20,10 +20,10 @@ state_filename = 'state'
 min_temp = 5
 max_temp = 65
 sleep_time = 0.1
-heat_rate         = 3       # fixed amount of degrees of heat per iteration
-cool_delta_ratio  = 0.1     # proportion per second by which internal temp approaches ambient temp
+heat_rate         = 0.1       # fixed amount of degrees per second
+cool_delta_ratio  = 0.02     # proportion per second by which internal temp approaches ambient temp
 transfer_delta_ratio  = 0.005     # proportion per second by which temp approaches internal temp
-switch_delay = 3
+switch_delay = 4
 
 mode = 'heating'    # or cooling
 

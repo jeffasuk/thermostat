@@ -25,9 +25,15 @@ var on_colour = '#ff0000';
 var off_colour = '#00ff00';
 var switch_temp_colour = '#F020D0';
 
-var canvas;
+var the_canvas;
 var ctx;
 var value_lists = [];
+
+// provide a shorter name for document.getElementById
+function getdocelem(elid)
+{
+    return document.getElementById(elid);
+}
 
 function int32ToStr(num)
 {
@@ -55,35 +61,34 @@ function normalizeNumber(n)
 
 function getTextWidth(item_id)
 {
-   return document.getElementById(item_id).getBoundingClientRect().width;
+   return getdocelem(item_id).getBoundingClientRect().width;
 }
 
-function setSizes(des_temperature, temperature)
+function setSizes(des_temperature, temp)
 {
-    var temp_diff = temperature - des_temperature;
+    var temp_diff = temp - des_temperature;
     var off_from_target = Math.abs(temp_diff);
     var bar_width = 2 * Math.max(1, Math.ceil(0.1 + off_from_target * 2) / 2);
     var min_temp_on_bar = des_temperature - bar_width / 2;
-    var pix_per_deg = document.getElementById('temperaturebar').width / bar_width;
-      document.getElementById('temperaturebandindent').width = ((bar_width - 1) / 2) * pix_per_deg;
-      document.getElementById('temperatureband').width = pix_per_deg;
-      document.getElementById('temperatureindicatorindent').width = (temperature - min_temp_on_bar) * pix_per_deg -
-                    document.getElementById('temperatureindicator').width / 2;
+    var pix_per_deg = getdocelem('temperaturebar').width / bar_width;
+      getdocelem('temperaturebandindent').width = ((bar_width - 1) / 2) * pix_per_deg;
+      getdocelem('temperatureband').width = pix_per_deg;
+      getdocelem('temperatureindicatorindent').width = (temp - min_temp_on_bar) * pix_per_deg -
+                    getdocelem('temperatureindicator').width / 2;
 
-      document.getElementById('ctemp').innerHTML =  normalizeNumber(temperature);
-      document.getElementById('indent').width = document.getElementById('temperatureindicatorindent').width -
+      getdocelem('ctemp').innerHTML =  normalizeNumber(temp);
+      getdocelem('indent').width = getdocelem('temperatureindicatorindent').width -
              getTextWidth('ctemp') / 2;
-      document.getElementById('mintemp').innerHTML = normalizeNumber(min_temp_on_bar);
-      document.getElementById('destemp').innerHTML = normalizeNumber(des_temperature);
-      document.getElementById('indentpredes').width = (document.getElementById('temperaturebar').width 
+      getdocelem('mintemp').innerHTML = normalizeNumber(min_temp_on_bar);
+      getdocelem('destemp').innerHTML = normalizeNumber(des_temperature);
+      getdocelem('indentpredes').width = (getdocelem('temperaturebar').width 
                                             - getTextWidth('destemp')) / 2
                                             - getTextWidth('mintemp');
-      document.getElementById('maxtemp').innerHTML = normalizeNumber(des_temperature + bar_width / 2);
-      document.getElementById('indentmaxtemp').width = document.getElementById('temperaturebar').width
-                - getTextWidth('mintemp') - document.getElementById('indentpredes').width
+      getdocelem('maxtemp').innerHTML = normalizeNumber(des_temperature + bar_width / 2);
+      getdocelem('indentmaxtemp').width = getdocelem('temperaturebar').width
+                - getTextWidth('mintemp') - getdocelem('indentpredes').width
                 - getTextWidth('destemp')
                 - getTextWidth('maxtemp');
-    temperature += 0.1;
 }
 
 function parseXml(xmlStr)
@@ -94,22 +99,22 @@ function parseXml(xmlStr)
 // valarray is an array of array of colours, line-widths and new values, one triple for each trace
 function updateGraph(valarray)
 {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, the_canvas.width, the_canvas.height);
     ctx.save();
     ctx.beginPath();
     ctx.lineWidth = 1;
     ctx.strokeStyle = '#333333';    // dark centre line
-    ctx.moveTo(0, canvas.height / 2);
-    ctx.lineTo(canvas.width, canvas.height / 2);
+    ctx.moveTo(0, the_canvas.height / 2);
+    ctx.lineTo(the_canvas.width, the_canvas.height / 2);
     ctx.stroke();
     ctx.beginPath();
     ctx.lineWidth = 1;
     ctx.strokeStyle = '#888888';    // light upper and lower lines
     ctx.setLineDash([5, 3]);
-    ctx.moveTo(0, canvas.height / 2 + canvas.height / 10);
-    ctx.lineTo(canvas.width, canvas.height / 2 + canvas.height / 10);
-    ctx.moveTo(0, canvas.height / 2 - canvas.height / 10);
-    ctx.lineTo(canvas.width, canvas.height / 2 - canvas.height / 10);
+    ctx.moveTo(0, the_canvas.height / 2 + the_canvas.height / 10);
+    ctx.lineTo(the_canvas.width, the_canvas.height / 2 + the_canvas.height / 10);
+    ctx.moveTo(0, the_canvas.height / 2 - the_canvas.height / 10);
+    ctx.lineTo(the_canvas.width, the_canvas.height / 2 - the_canvas.height / 10);
     ctx.stroke();
     ctx.restore();
     ctx.save();
@@ -142,105 +147,105 @@ function drawPlot(value_list)
     }
 }
 
+function signedNumber(num)
+{
+    return ((num > 0) ? '+' : '') + num;
+}
+
 // colours distinct from each other and from red/green used for the controlling trace, and from purple for the switch temperature
 var dot_colours = ['#808080', '#0b84a5', '#6f4e7c', '#ca472f']; // distinct from each other and from red/green used for the controlling trace
 function gotStatusResponse()
 {
    if (xhttp.status == 200)
    {
-       try
-        {
-          var xmlDoc;
-          if (window.DOMParser)
+      var xmlDoc;
+      if (window.DOMParser)
+      {
+          parser = new DOMParser();
+          xmlDoc = parser.parseFromString(xhttp.responseText, 'text/xml');
+      }
+      else // Internet Explorer
+      {
+          xmlDoc = new ActiveXObject('Microsoft.XMLDOM');
+          xmlDoc.async = false;
+          xmlDoc.loadXML(xhttp.responseText);
+      }
+      var cur_temp = 1 * xmlDoc.getElementsByTagName('tmp')[0].childNodes[0].nodeValue;
+      var relay_state = 1 * xmlDoc.getElementsByTagName('state')[0].childNodes[0].nodeValue;
+      var des_temperature = 1 * xmlDoc.getElementsByTagName('des')[0].childNodes[0].nodeValue;
+      var switchoffsetabove_val = 1 * xmlDoc.getElementsByTagName('switchoffsetabove')[0].childNodes[0].nodeValue;
+      var switchoffsetbelow_val = 1 * xmlDoc.getElementsByTagName('switchoffsetbelow')[0].childNodes[0].nodeValue;
+      var mode_val = xmlDoc.getElementsByTagName('mode')[0].childNodes[0].nodeValue;
+      var switchtempabove = des_temperature + switchoffsetabove_val;
+      var switchtempbelow = des_temperature + switchoffsetbelow_val;
+
+      getdocelem('onoffimg').src = (relay_state == 1)
+            ? (mode_val == 'heating' ? red_image : blue_image)
+            : green_image;
+      getdocelem('onofftext').textContent = 'Power ' + ((relay_state == 1) ? ('on (' + mode_val + ')') : 'off');
+      getdocelem('displaytargettemp').textContent = des_temperature;
+      getdocelem('displayprecision').textContent = xmlDoc.getElementsByTagName('prec')[0].childNodes[0].nodeValue;
+      getdocelem('displayreptime').textContent = xmlDoc.getElementsByTagName('maxrep')[0].childNodes[0].nodeValue;
+      getdocelem('displaymode').textContent = mode_val;
+      getdocelem('displayswitchabovetemp').textContent = switchtempabove;
+      getdocelem('displayswitchbelowtemp').textContent = switchtempbelow;
+      getdocelem('displayswitchoffsetabove').textContent = signedNumber(switchoffsetabove_val);
+      getdocelem('displayswitchoffsetbelow').textContent = signedNumber(switchoffsetbelow_val);
+
+      // Temperature bar
+      setSizes(des_temperature, cur_temp);
+
+      // Graph
+      var new_values = [];
+      var main_dot_colour = (relay_state == 1) ? on_colour : off_colour;
+      var temps = xmlDoc.getElementsByTagName('tmp');
+
+      getdocelem('controlsensorid').textContent = temps[0].id;
+      getdocelem('controlsensorvalue').textContent = temps[0].childNodes[0].nodeValue;
+
+      var i = 0;
+      var doc_legend_elem = getdocelem('legend');
+      while (doc_legend_elem.lastChild) {
+        doc_legend_elem.removeChild(doc_legend_elem.lastChild);
+      }
+
+      getdocelem('othersensors').style.display = (temps.length < 2) ? 'none' : 'block';
+
+      // start with lines for switch temperatures
+      new_values.push( [switch_temp_colour, 1, getGraphPos(switchtempabove, des_temperature)] );
+      new_values.push( [switch_temp_colour, 1, getGraphPos(switchtempbelow, des_temperature)] );
+
+      for (let tmp_elem of temps)
+      {
+          var tmp = tmp_elem.childNodes[0].nodeValue;
+          var dot_colour, font_colour, line_width;
+          if (i == 0)
           {
-              parser = new DOMParser();
-              xmlDoc = parser.parseFromString(xhttp.responseText, 'text/xml');
+              // first sensor is currently hard-coded as the controlling one
+              // no list item, as this is already displayed in the html
+              dot_colour = main_dot_colour;
+              line_width = 2;
           }
-          else // Internet Explorer
+          else
           {
-              xmlDoc = new ActiveXObject('Microsoft.XMLDOM');
-              xmlDoc.async = false;
-              xmlDoc.loadXML(xhttp.responseText);
+              list_item = document.createElement('li');
+              font_colour = dot_colour = dot_colours[i % dot_colours.length];
+              list_item.style.color = dot_colour;
+              line_width = 1;
+              list_item.innerHTML = '<pre><font color=\"' + font_colour + '\">' + tmp_elem.id + '</font> ' + tmp + '</pre>';
+              doc_legend_elem.appendChild(list_item);
           }
-          var temperature = 1 * xmlDoc.getElementsByTagName('tmp')[0].childNodes[0].nodeValue;
-          var relay_state = 1 * xmlDoc.getElementsByTagName('state')[0].childNodes[0].nodeValue;
-          var des_temperature = 1 * xmlDoc.getElementsByTagName('des')[0].childNodes[0].nodeValue;
-          var maxdiscrepdown = 1 * xmlDoc.getElementsByTagName('maxdiscrepdown')[0].childNodes[0].nodeValue;
-          var maxdiscrepup   = 1 * xmlDoc.getElementsByTagName('maxdiscrepup')[0].childNodes[0].nodeValue;
-          var switch_temp    = 1 * xmlDoc.getElementsByTagName('switch')[0].childNodes[0].nodeValue;
-          var mode = xmlDoc.getElementsByTagName('mode')[0].childNodes[0].nodeValue;
-
-          document.getElementById('onoffimg').src = (relay_state == 1)
-                ? (mode == 'heating' ? red_image : blue_image)
-                : green_image;
-          document.getElementById('onofftext').textContent = 'Power ' + ((relay_state == 1) ? ('on (' + mode + ')') : 'off');
-          document.getElementById('displaytargettemp').textContent = des_temperature;
-          document.getElementById('displayprecision').textContent = xmlDoc.getElementsByTagName('prec')[0].childNodes[0].nodeValue;
-          document.getElementById('displayreptime').textContent = xmlDoc.getElementsByTagName('maxrep')[0].childNodes[0].nodeValue;
-          document.getElementById('displaymode').textContent = mode;
-          document.getElementById('maxdiscrepdown').textContent = maxdiscrepdown;
-          document.getElementById('maxdiscrepup').textContent = maxdiscrepup;
-
-          // Temperature bar
-          setSizes(des_temperature, temperature);
-
-          // Graph
-          var new_values = [];
-          var main_dot_colour = (relay_state == 1) ? on_colour : off_colour;
-          var temps = xmlDoc.getElementsByTagName('tmp');
-
-          document.getElementById('controlsensorid').textContent = temps[0].id;
-          document.getElementById('controlsensorvalue').textContent = temps[0].childNodes[0].nodeValue;
-          document.getElementById('switchtemperaturevalue').textContent = switch_temp;
-
-          var i = 0;
-          var doc_legend_elem = document.getElementById('legend');
-          while (doc_legend_elem.lastChild) {
-            doc_legend_elem.removeChild(doc_legend_elem.lastChild);
-          }
-
-          document.getElementById('othersensors').style.display = (temps.length < 2) ? 'none' : 'block';
-
-          // start with line for switch_temperature
-          new_values.push( [switch_temp_colour, 1, getGraphPos(switch_temp, des_temperature)] );
-
-          for (let tmp_elem of temps)
-          {
-              var tmp = tmp_elem.childNodes[0].nodeValue;
-              var dot_colour, font_colour, line_width;
-              if (i == 0)
-              {
-                  // first sensor is currently hard-coded as the controlling one
-                  // no list item, as this is already displayed in the html
-                  dot_colour = main_dot_colour;
-                  line_width = 2;
-              }
-              else
-              {
-                  list_item = document.createElement('li');
-                  font_colour = dot_colour = dot_colours[i % dot_colours.length];
-                  list_item.style.color = dot_colour;
-                  line_width = 1;
-                  list_item.innerHTML = '<pre><font color=\"' + font_colour + '\">' + tmp_elem.id + '</font> ' + tmp + '</pre>';
-                  doc_legend_elem.appendChild(list_item);
-              }
-              new_values.push( [dot_colour, line_width, getGraphPos(1 * tmp, des_temperature)] );
-              i +=1;
-          }
-          updateGraph(new_values);
-          // End of graph
-       }
-   catch (err)
-       {
-        // catch all errors, for info and to allow the reschedule to happen
-        console.log('Failed: ' + err.message);
-       }
+          new_values.push( [dot_colour, line_width, getGraphPos(1 * tmp, des_temperature)] );
+          i +=1;
+      }
+      updateGraph(new_values);
+      // End of graph
    }
 }
 function getGraphPos(temp, des)
 {
     var temp_diff = temp - des;
-    var point_height = canvas.height / 2 + canvas.height * temp_diff / 5;    // assume 5deg spread on graph
+    var point_height = the_canvas.height / 2 + the_canvas.height * temp_diff / 5;    // assume 5deg spread on graph
     return point_height;
 }
 
@@ -255,15 +260,15 @@ function fetchStatus()
 function startGettingStatus()
 {
     // set temperature bar colour images
-    document.getElementById('temperaturebar').src = black_image;
-    document.getElementById('temperatureband').src = green_image;
-    document.getElementById('temperatureindicator').src = red_image;
-    canvas = document.getElementById('graphCanvas');
+    getdocelem('temperaturebar').src = black_image;
+    getdocelem('temperatureband').src = green_image;
+    getdocelem('temperatureindicator').src = red_image;
+    the_canvas = getdocelem('graphCanvas');
     // we might want these values to differ from full width/height, if there's other stuff on the canvas
-    graph_height = canvas.height;
-    graph_width = canvas.width;
-    ctx = canvas.getContext('2d');
-    canvas.style.border = 'black 1px solid';
+    graph_height = the_canvas.height;
+    graph_width = the_canvas.width;
+    ctx = the_canvas.getContext('2d');
+    the_canvas.style.border = 'black 1px solid';
     setInterval(fetchStatus, 2000);
     fetchStatus(); // do one immediately
 }
@@ -284,7 +289,7 @@ function gotChangeSettingsResponse()
 
 function submitSettingsForm()
 {
-   var form = document.getElementById('settings-form');
+   var form = getdocelem('settingsform');
    var form_elems = form.getElementsByTagName('input');
    var params = '';
    for (var idx = 0; idx < form_elems.length; ++idx)
@@ -354,30 +359,29 @@ E.g. at 16 with target 17.5:
 <br><font color='#ff0000'>&#9679;</font>/<font color='#00ff00'>&#9679;</font>Controlling sensor 
     <span id=controlsensorid>??</span> <span id=controlsensorvalue>??</span>
 <!-- switch temperature -->
-<br><font color='#F020D0'>&#9679;</font>Switch temperature
-    <span id=switchtemperaturevalue>??</span> (range -<span id=maxdiscrepdown>??</span>,<span id=maxdiscrepup>??</span>)
+<br><font color='#F020D0'>&#9679;</font>Switch temperatures
+    <span id=displayswitchbelowtemp>??</span>-<span id=displayswitchabovetemp>??</span>
 <p id=othersensors>Other sensors:
 <ul id='legend' style='line-height:20%'>
 </ul>
 </p>
 
 <p>
-Target temperature degC: <span id=displaytargettemp>??</span>
+Target temperature degC: <span id=displaytargettemp>??</span> (<span id=displayswitchoffsetbelow>??</span> to <span id=displayswitchoffsetabove>??</span>)
 <br>Mode: <span id=displaymode>??</span>
 <br>Precision degC: <span id=displayprecision>??</span>
 <br>Max. time (seconds) between reports: <span id=displayreptime>??</span>
 </p>
 
 <h3>Change settings</h3>
-<form id='settings-form'>
-Target temperature degC: <input type=text id=des_input name=des_temp value='' />
-        <input type=radio name=mode value=0 id=heatingmode >heating or 
-        <input type=radio name=mode value=1 id=coolingmode >cooling
-<br>Precision degC: <input type=text id=precision name=precision value='' />
+<form id=settingsform>
+Target temperature degC: <input type=text size=4 name=des_temp value='' />
+        <input type=radio name=mode value=0 >heating or 
+        <input type=radio name=mode value=1 >cooling
+<br>Precision degC: <input type=text size=4 name=precision value='' />
 <br><span style='font-size:smaller'>This gives the minimum change in temperature that will be noticed.
 Set to a high value to give more inertia to both reporting and relay switching.</span>
-<br>Temperature range degC for heuristic: below: <input type=text name=maxdiscrepdown value='' /> above: <input type=text name=maxdiscrepup value='' />
-<br>Max. time (seconds) between reports: <input type=text id=maxreporttime name=maxreporttime value='' />
+<br>Max. time (seconds) between reports: <input type=text size=4 name=maxreporttime value='' />
 <br><span style='font-size:smaller'>This forces a report to be sent after the specified time
 even if there was no reportable event.
 Reportable events are switching the relay on or off,

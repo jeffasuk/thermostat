@@ -11,35 +11,51 @@
 #include "sensors.h"
 #include "webserver.h"
 
+/* NB The terms "up" and "down" refer to the direction in which the power operates, so "up" means
+   increasing temperature when heating, but decreasing temperature when cooling.
+   Ditto for "max" and "min".
+ */
+
 // for detecting change in desired temperature and other settings
 static float previous_desired_temperature = IMPOSSIBLE_TEMPERATURE;
 static uint8_t previous_mode = 99;  // matches neither of the valid mode values
+
 static int8_t temperature_changing = 0;    // -1 = going down,  0 = not changing,  +1 = going up
 
 enum RELAY_STATE {POWER_OFF, POWER_ON};
 const char *powerStateName[] = {"OFF", "ON"}; // for debug and reporting
 
+// Some odd effects can happen if the offsets are changed while we're deciding whether to switch
+// on or off. In such circumstances, use these pending variables so the change can be applied when safe.
+static float pending_switch_offset_above = IMPOSSIBLE_TEMPERATURE;
+static float pending_switch_offset_below = IMPOSSIBLE_TEMPERATURE;
+
+// A pair of offset values indicates a range of below-above the desired temperature. They thus divide the full
+// temperature range into 4 regions:
+//  High        = above desired + switch_offset_above
+//  Mid High    = below desired + switch_offset_above but above desired
+//  Mid Low     = below desired but above desired + switch_offset_below
+//  Low         = below desired + switch_offset_below
+// (switch_offset_below should be negative)
+typedef enum REGION {REGION_HIGH, REGION_MID_HIGH, REGION_MID_LOW, REGION_LOW};
+
 static uint32_t     millis_now;
 static uint32_t     millis_at_last_report = 0;
-static float        previous_temperature = IMPOSSIBLE_TEMPERATURE;     // for detecting direction change
+static float        previous_temperature = IMPOSSIBLE_TEMPERATURE;     // for detecting direction of change
 
-// for detecting settings changed
-static float        previous_max_discrepancy_down = persistent_data.max_discrepancy_down;
-static float        previous_max_discrepancy_up = persistent_data.max_discrepancy_up;
-
-static float    pending_switch_temperature  = IMPOSSIBLE_TEMPERATURE;
+// for comparing how long power is on vs. how long off
+static uint32_t time_when_switched_on = 0;
+static uint32_t time_when_switched_off = 0;
+static uint32_t length_of_last_on_period = 0;
+static uint32_t length_of_last_off_period = 0;
 
 // rotating history of discrepancies from switch temperature
-#define HISTORY_LENGTH  10  // must be even number, to catch equal number of peaks and troughs
+#define HISTORY_CYCLES  5   // number of on/off cycles to keep history of
+#define HISTORY_LENGTH  (HISTORY_CYCLES*2)  // must be even number, to catch equal number of peaks and troughs
 static float past_peaks_and_troughs[HISTORY_LENGTH] = {0};
 static uint8_t history_index = HISTORY_LENGTH-1;
 static float min_temperature = IMPOSSIBLE_TEMPERATURE;
 static float max_temperature = IMPOSSIBLE_TEMPERATURE;
-
-/* NB The terms "up" and "down" refer to the direction in which the power operates, so "up" means
-   increasing temperature when heating, but decreasing temperature when cooling.
-   Ditto for "max" and "min".
- */
 
 float normalizeTemperature(float temperature)
 {
@@ -78,7 +94,20 @@ static int assessRelayStateSimple(int pre_relay_state)
     return POWER_OFF;
 }
 #endif
-static void handlePeaksAndTroughs(int8_t new_relay_state, uint8_t *revert_to_startup_algorithm)
+static void revertToStartupAlgorithm()
+{
+    // Clear out history and such to revert to start-up state.
+    history_index = HISTORY_LENGTH-1;
+    for (int i = 0; i < HISTORY_LENGTH; ++i)
+    {
+        past_peaks_and_troughs[i] = 0.0;
+    }
+    switch_offset_above = switch_offset_below = 0;
+}
+
+// Record peaks and troughs w.r.t. the current switch temperature.
+// Will be used later for tuning.
+static void recordPeaksAndTroughs(float switch_temperature, int8_t new_relay_state)
 {
     float diff;
     if ( (new_relay_state == POWER_OFF && persistent_data.mode == HEATING)
@@ -86,45 +115,34 @@ static void handlePeaksAndTroughs(int8_t new_relay_state, uint8_t *revert_to_sta
         )
     {
         // just switched heating off or cooling on, so we're heading for a temperature peak
-        // record the temperature discrepancy at the preceding temperature trough...
         diff = min_temperature - switch_temperature;
-        *revert_to_startup_algorithm = abs(diff) > persistent_data.max_discrepancy_down;
-        if (*revert_to_startup_algorithm)
-        {
-            DOPRINT("Reverting to start-up switching. min = ");
-            DOPRINT(min_temperature);
-            DOPRINT(" switch = ");
-            DOPRINTLN(switch_temperature);
-        }
-        // ... and start recording max temperature in order to capture level of next temperature peak
+        // start recording max temperature in order to capture level of next temperature peak
         max_temperature = current_temperature;
     }
     else  // must have just switched heating on or cooling off, so we're heading for a temperature trough
     {
-        // record the temperature discrepancy at the preceding temperature peak...
         diff = max_temperature - switch_temperature;
-        *revert_to_startup_algorithm = abs(diff) > persistent_data.max_discrepancy_up;
-        if (*revert_to_startup_algorithm)
-        {
-            DOPRINT("Reverting to start-up switching. max = ");
-            DOPRINT(max_temperature);
-            DOPRINT(" switch = ");
-            DOPRINTLN(switch_temperature);
-        }
-        // ... and start recording min temperature in order to capture level of next temperature trough
+        // start recording min temperature in order to capture level of next temperature trough
         min_temperature = current_temperature;
     }
+    // record the temperature discrepancy at the preceding temperature peak/trough...
     history_index = (history_index + 1) % HISTORY_LENGTH;
     past_peaks_and_troughs[history_index] = diff;
 }
 
 static void assessPerformance()
 {
+ static int nb_cycles = 0;   // don't assess until we've gone round at least once
     // we're about to switch on, so assess performance
     float average_discrepancy = 0;
     float min_val = past_peaks_and_troughs[0];
     float max_val = past_peaks_and_troughs[0];
-    float new_switch_temperature;
+
+    if (++nb_cycles < HISTORY_CYCLES)
+    {
+        return;
+    }
+    nb_cycles = HISTORY_CYCLES; // to avoid overflow, not that the device is likely to run that long withour a reset
     for (int i = 0; i < HISTORY_LENGTH; ++i)
     {
         average_discrepancy += past_peaks_and_troughs[i];
@@ -142,86 +160,272 @@ static void assessPerformance()
     DOPRINT(min_val);
     DOPRINT(" and ");
     DOPRINTLN(max_val);
-    // adjust switch point
-    new_switch_temperature = persistent_data.desired_temperature - average_discrepancy;
-    if (new_switch_temperature != switch_temperature)
+    // adjust switch offsets
+    float relative_switch_temperature = (switch_offset_above + switch_offset_below) / 2;
+    // discrepancy_from_desired is what we need the offset to be
+    float discrepancy_from_desired = relative_switch_temperature - average_discrepancy;
+    if (discrepancy_from_desired != 0)
     {
-        if (normalizeTemperature(new_switch_temperature) < normalizeTemperature(switch_temperature))
+        if (discrepancy_from_desired > 0)
         {
-            pending_switch_temperature = new_switch_temperature;
-            DOPRINT  ("Set pending switch temperature: ");
+            // changing up
+            if (temperature_changing > 0)
+            {
+                pending_switch_offset_above = discrepancy_from_desired;
+            }
+            else
+            {
+                switch_offset_above = discrepancy_from_desired;
+            }
         }
-        else
+        else if (discrepancy_from_desired < 0)
         {
-            switch_temperature = new_switch_temperature;
-            DOPRINT  ("New switch temperature: ");
+            // changing down
+            // if temp falling, make pending so as not to trigger an immediate switch-off by immediately
+            // applying the new value
+            if (temperature_changing < 0)
+            {
+                pending_switch_offset_below = discrepancy_from_desired;
+            }
+            else
+            {
+                switch_offset_below = discrepancy_from_desired;
+            }
         }
-        DOPRINTLN(new_switch_temperature);
     }
 }
 
 static int8_t assessRelayState(int8_t pre_relay_state)
 {
+static float local_previous_temperature = IMPOSSIBLE_TEMPERATURE;    // NB: separate from previous_temperature used in reporting (in loop)
     uint8_t switched = 0;
-    uint8_t revert_to_startup_algorithm = 0;
+    int8_t heating_is_more_powerful = 0;    // -1 == No,  0 == undecided,  +1 = Yes
     int8_t new_relay_state = pre_relay_state;
+    float norm_temp;
+    int norm_changing;
+    float switch_on_temperature;
+    float switch_off_temperature;
+    float switch_mid_temperature;
+    REGION region;
 
-    setIfImpossible(&switch_temperature, persistent_data.desired_temperature);
     setIfImpossible(&max_temperature, current_temperature);
     setIfImpossible(&min_temperature, current_temperature);
-    if (normalizeTemperature(current_temperature) >= normalizeTemperature(switch_temperature))
+    setIfImpossible(&local_previous_temperature, current_temperature);
+    temperature_changing = (local_previous_temperature == current_temperature) ? 0
+                    : ( (local_previous_temperature < current_temperature) ? 1 : -1);
+
+    if (persistent_data.mode == HEATING)
     {
-        if (pre_relay_state == POWER_ON)
-        {
-            // too warm for power on, so switch off
-            new_relay_state = POWER_OFF;
-            switched = 1;
-        }
+        switch_on_temperature = persistent_data.desired_temperature + switch_offset_above;
+        switch_off_temperature = persistent_data.desired_temperature + switch_offset_below;
+        norm_changing = temperature_changing;
     }
     else
     {
-        if (pre_relay_state == POWER_OFF)
-        {
-            // too cool for power off, so switch on
-            new_relay_state = POWER_ON;
-            switched = 1;
-        }
+        // reverse meaning of offsets and temperature direction when cooling
+        switch_on_temperature = persistent_data.desired_temperature + switch_offset_below;
+        switch_off_temperature = persistent_data.desired_temperature + switch_offset_above;
+        norm_changing = -temperature_changing;
     }
 
+    switch_mid_temperature = (switch_on_temperature + switch_off_temperature) / 2.0;
+
+    norm_temp = normalizeTemperature(current_temperature);
+
+    local_previous_temperature = current_temperature;
+
+    if (length_of_last_on_period != 0 && length_of_last_off_period != 0)
+    {
+        if (length_of_last_on_period < length_of_last_off_period)
+        {
+            heating_is_more_powerful = 1;   // yes
+        }
+        else if (length_of_last_on_period > length_of_last_off_period)
+        {
+            heating_is_more_powerful = -1;   // no
+        }
+    }
+    // else leave at zero for undecided
+
+    // indicate which region we're in to simplify code below.
+    region =  (norm_temp > normalizeTemperature(switch_on_temperature))      ? REGION_HIGH
+            : (norm_temp > normalizeTemperature(switch_mid_temperature))    ? REGION_MID_HIGH
+            : (norm_temp >= normalizeTemperature(switch_off_temperature))    ? REGION_MID_LOW
+            : REGION_LOW;
+
+    if (pre_relay_state == POWER_ON)
+    {   
+        uint8_t do_switch = 0;
+        if (region == REGION_HIGH)
+        {
+            // above the upper temperature; always turn off
+            DOPRINTLN("High: switch OFF");
+            do_switch = 1;
+        }
+        else
+        {
+            switch(heating_is_more_powerful)
+            {
+                case 1:
+                    {
+                        // heating is more powerful (i.e. stays on for less time than cooling)
+                        // so heating happens in Low, and in Mid-low if falling. Anywhere else, switch off.
+                        // That is in High, Mid-high, and Mid-low if rising
+                        // High has already been dealt with above
+                        if ( region == REGION_MID_HIGH
+                            || (region == REGION_MID_LOW && norm_changing > 0) )
+                        {
+                            if ( region == REGION_MID_HIGH)
+                            {
+                                DOPRINTLN("Mid-high and heating more powerful: switch OFF");
+                            }
+                            else
+                            {
+                                DOPRINTLN("Mid-low and heating more powerful and temp rising: switch OFF");
+                            }
+                            do_switch = 1;
+                        }
+                    }
+                    break;
+                case -1:
+                    {
+                        // heating is less powerful (i.e. stays on less time than cooling)
+                        // so heating happens in Low, in Mid-low and in Mid-high if falling. Anywhere else, switch off.
+                        // That is in High, and Mid-high if rising
+                        // High has already been dealt with above
+                        if ( region == REGION_MID_HIGH && norm_changing > 0)
+                        {
+                            DOPRINTLN("Mid-high and heating less powerful and temp rising: switch OFF");
+                            do_switch = 1;
+                        }
+                    }
+                    break;
+                case 0:
+                    {
+                        // heating and cooling times are balanced. (Unlikely to be exact; maybe make the logic a bit fuzzy)
+                        // In either mid-range, switch off if rising
+                        if ( (region == REGION_MID_HIGH || region == REGION_MID_LOW)
+                                && norm_changing > 0)
+                        {
+                            DOPRINTLN("Balanced: switch OFF");
+                            do_switch = 1;
+                        }
+                    }
+            }
+        }
+        if (do_switch)
+        {
+            new_relay_state = POWER_OFF;
+            switched = 1;
+            time_when_switched_off = millis_now;
+            if (time_when_switched_on != 0)
+            {
+                length_of_last_on_period = millis_now - time_when_switched_on;
+            }
+        }
+    }
+    else // pre_relay_state == POWER_OFF
+    {   
+        uint8_t do_switch = 0;
+        if (region == REGION_LOW)
+        {
+            // below the lower temperature; always turn on
+            DOPRINTLN("Low: switch ON");
+            do_switch = 1;
+        }
+        else
+        {
+            switch(heating_is_more_powerful)
+            {
+                case 1:
+                    {
+                        // heating is more powerful (i.e. stays on longer than cooling)
+                        // so heating happens in Low, and in Mid-low if falling.
+                        // Low has already been dealt with above
+                        if ( region == REGION_MID_LOW && norm_changing < 0)
+                        {
+                            DOPRINTLN("Mid-low and heating more powerful and temp falling: switch ON");
+                            do_switch = 1;
+                        }
+                    }
+                    break;
+                case -1:
+                    {
+                        // heating is less powerful (i.e. stays on less time than cooling)
+                        // so heating happens in Low, in Mid-low and in Mid-high if falling.
+                        // Low has already been dealt with above
+                        if ( region == REGION_MID_LOW
+                             || (region == REGION_MID_HIGH && norm_changing < 0) )
+                        {
+                            if ( region == REGION_MID_LOW)
+                            {
+                                DOPRINTLN("Mid-low and heating less powerful: switch ON");
+                            }
+                            else
+                            {
+                                DOPRINTLN("Mid-low and heating less powerful and temp falling: switch ON");
+                            }
+                            do_switch = 1;
+                        }
+                    }
+                    break;
+                case 0:
+                    {
+                        // heating and cooling times are balanced. (Unlikely to be exact; maybe make the logic a bit fuzzy)
+                        // In either mid-range, switch on if falling
+                        if ( (region == REGION_MID_HIGH || region == REGION_MID_LOW)
+                                && norm_changing < 0)
+                        {
+                            DOPRINTLN("Balanced: switch ON");
+                            do_switch = 1;
+                        }
+                    }
+            }
+        }
+        if (do_switch)
+        {
+            new_relay_state = POWER_ON;
+            switched = 1;
+            time_when_switched_on = millis_now;
+            if (time_when_switched_off != 0)
+            {
+                length_of_last_off_period = millis_now - time_when_switched_off;
+            }
+        }
+    }
     if (switched)
     {
-        handlePeaksAndTroughs(new_relay_state, &revert_to_startup_algorithm);
+        recordPeaksAndTroughs(switch_mid_temperature, new_relay_state);
     }
 
     max_temperature = max(max_temperature, current_temperature);
     min_temperature = min(min_temperature, current_temperature);
-
-    if (revert_to_startup_algorithm)
-    {
-        // latest discrepancy is outside the range we can comfortably handle without ringing
-        // so reset to start-up state
-        history_index = HISTORY_LENGTH-1;
-        for (int i = 0; i < HISTORY_LENGTH; ++i)
-        {
-            past_peaks_and_troughs[i] = 0.0;
-        }
-        switch_temperature = persistent_data.desired_temperature;
-    }
 
     if (switched && new_relay_state == POWER_ON)
     {
         assessPerformance();
     }
 
-    if (switched && new_relay_state == POWER_OFF && pending_switch_temperature != IMPOSSIBLE_TEMPERATURE)
+    if (switched && new_relay_state == POWER_OFF && pending_switch_offset_below != IMPOSSIBLE_TEMPERATURE)
     {
-        switch_temperature = pending_switch_temperature;
-        pending_switch_temperature = IMPOSSIBLE_TEMPERATURE;
-        DOPRINT("Apply pending switch-on temperature: ");
-        DOPRINTLN(switch_temperature);
+        switch_offset_below = pending_switch_offset_below;
+        pending_switch_offset_below = IMPOSSIBLE_TEMPERATURE;
+        DOPRINT("Apply pending switch-offset-below: ");
+        DOPRINTLN(switch_offset_below);
     }
+
+    if (switched && new_relay_state == POWER_ON && pending_switch_offset_above != IMPOSSIBLE_TEMPERATURE)
+    {
+        switch_offset_above = pending_switch_offset_above;
+        pending_switch_offset_above = IMPOSSIBLE_TEMPERATURE;
+        DOPRINT("Apply pending switch-offset-above: ");
+        DOPRINTLN(switch_offset_above);
+    }
+
     return new_relay_state;
 }
+
+
 
 /* this is called on power-up */
 void setup()
@@ -305,10 +509,10 @@ void loop()
         connectWiFi();
     }
 
+    uint32_t millis_at_loop_start = millis();
+
     setLEDflashing(100, 400);
-    //DOPRINTLN("read sensors");
     readSensors(&sensor_data);
-    //DOPRINTLN("read sensors done");
     if (sensor_data.temperature[0].ok != ONEWIRE_OK)
     {
         DOPRINTLN("Failed to read controlling temperature sensor. Turning off for safety.");
@@ -319,9 +523,8 @@ void loop()
     else
     {
         float temperature_to_report;
-        int send_report = 0;
         int do_check = 0;
-        const char *report_comment = NULL;
+        char report_text[100] = "";
         temperature_to_report = current_temperature = sensor_data.temperature[0].temperature_c;
 #ifndef QUIET
         DOPRINT  (powerStateName[relay_state]);
@@ -347,46 +550,35 @@ void loop()
         }
         DOPRINT  (", target ");
         DOPRINT  (persistent_data.desired_temperature);
-        DOPRINT  ("   switching at ");
-        DOPRINT  (switch_temperature);
-        DOPRINT  ("(-"); DOPRINT(persistent_data.max_discrepancy_down);
-        DOPRINT  (","); DOPRINT(persistent_data.max_discrepancy_up);
-        DOPRINT  (") for ");
+        DOPRINT  ("   switching range ");
+        DOPRINT  (switch_offset_below);
+        DOPRINT  (" .. ");
+        DOPRINT  (switch_offset_above);
+        DOPRINT  ("  for ");
         DOPRINTLN(persistent_data.mode == HEATING ? "heating" : "cooling");
 #endif
         if (previous_temperature == IMPOSSIBLE_TEMPERATURE  // start-up state
             || persistent_data.desired_temperature != previous_desired_temperature // new desired temperature
             || persistent_data.mode != previous_mode // new mode
-            || persistent_data.max_discrepancy_down != previous_max_discrepancy_down
-            || persistent_data.max_discrepancy_up != previous_max_discrepancy_up
           )
         {
             // first time after reset or significant change in settings, so report
             // current temperature and use it to decide action
-            send_report = 1;
             if (previous_temperature == IMPOSSIBLE_TEMPERATURE)
             {
-                report_comment = "First time after reset";
+                strcat(report_text, "First time after reset. ");
                 DOPRINTLN("report because first time through");
             }
             else
             {
-                report_comment = "First time after change in settings";
+                strcat(report_text, "First time after change in settings");
                 DOPRINTLN("report because of change in settings");
-                if (switch_temperature != IMPOSSIBLE_TEMPERATURE)
-                {
-                    switch_temperature += persistent_data.desired_temperature - previous_desired_temperature;
-                    DOPRINT  ("New switch temperature (settings change): ");
-                    DOPRINTLN(switch_temperature);
-                    DOPRINTLN("report because of change in settings");
-                }
             }
             previous_desired_temperature = persistent_data.desired_temperature;
             previous_mode = persistent_data.mode;
             previous_temperature = current_temperature;
-            previous_max_discrepancy_down = persistent_data.max_discrepancy_down;
-            previous_max_discrepancy_up = persistent_data.max_discrepancy_up;
             temperature_to_report = current_temperature;
+            revertToStartupAlgorithm();
             do_check = 1;
         }
         else if (abs(previous_temperature - current_temperature) > persistent_data.precision)
@@ -402,7 +594,7 @@ void loop()
                 {
                     temperature_changing = 1;
                     change_name = "warmer";
-                    report_comment = "Started getting warmer";
+                    strcat(report_text, "Started getting warmer");
                 }
             }
             else // previous_temperature must be > current_temperature as we already tested for same (or very small diff)
@@ -412,7 +604,7 @@ void loop()
                 {
                     temperature_changing = -1;
                     change_name = "cooler";
-                    report_comment = "Started getting cooler";
+                    strcat(report_text, "Started getting cooler");
                 }
             }
             if (change_name != NULL)
@@ -420,7 +612,6 @@ void loop()
                 // a reportable change has occurred
                 DOPRINT("report because now getting ");
                 DOPRINTLN(change_name);
-                send_report = 1;
                 temperature_to_report = previous_temperature;   // report the more extreme, now that we're going in the opposite direction
             }
             previous_temperature = current_temperature;
@@ -435,6 +626,7 @@ void loop()
             int8_t pre_relay_state = relay_state;
             if (abs(persistent_data.desired_temperature - current_temperature) > persistent_data.precision)
             {
+                //TODO Consider whether this should be conditional (probably not, as there's a check on change amount above).
                 // sufficiently far from desired to make a change
                 relay_state = assessRelayState(pre_relay_state);
             }
@@ -442,8 +634,7 @@ void loop()
             {
                 if (relay_state)
                 {
-                    send_report = 1;
-                    report_comment = "Turning on";
+                    strcat(report_text, "Turning on");
                     DOPRINTLN("report because turning on");
                     DOPRINTLN("turn on");
                     relay_state = POWER_ON;
@@ -451,8 +642,7 @@ void loop()
                 }
                 else
                 {
-                    send_report = 1;
-                    report_comment = "Turning off";
+                    strcat(report_text, "Turning off");
                     DOPRINTLN("report because turning off");
                     DOPRINTLN("turn off");
                     relay_state = POWER_OFF;
@@ -461,24 +651,24 @@ void loop()
             }
         }
 
-        if (send_report)
+        if (!report_text[0]
+                && (millis_now - millis_at_last_report) > (persistent_data.max_time_between_reports * 1000))
         {
-            sendReport(temperature_to_report, switch_temperature, relay_state, report_comment, &sensor_data);
-            millis_at_last_report = millis_now;
-        }
-        else if ((millis_now - millis_at_last_report) > (persistent_data.max_time_between_reports * 1000))
-        {
-            char report_text[100];
             sprintf(report_text, "Time %u - %u > %u",
                         millis_now, millis_at_last_report, persistent_data.max_time_between_reports);
+        }
+        if (report_text[0])
+        {
             DOPRINT  ("reporting because: ");
             DOPRINTLN(report_text);
-            sendReport(temperature_to_report, switch_temperature, relay_state, report_text, &sensor_data);
+            sendReport(temperature_to_report, relay_state, switch_offset_below, switch_offset_above,
+                        report_text, &sensor_data);
             millis_at_last_report = millis_now;
         }
 
         setLEDflashing(0, 0);
     }
-    // 1-sec delay between actions
-    delay(1000);
+    // min 1-sec spacing between actions, allowing for how much time was spent actually doing stuff
+    // always have a non-zero delay call to let other operations in (probably unnecessary, but no harm).
+    delay(max(1, int(1000 - (millis() - millis_at_loop_start))));
 }

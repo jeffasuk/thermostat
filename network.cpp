@@ -334,10 +334,10 @@ void getResponse()
     client.stop();
 }
 
-void sendReport(float current_temperature, float switch_temperature, int relay_state,
+void sendReport(float current_temperature, int8_t relay_state,
+        float switch_offset_below, float switch_offset_above,
         const char *comment, SENSOR_DATA *sensor_data)
 {
-    DOPRINTLN("sendReport");
     if (!connectTCP())
     {
         char *sanitized_txt = (char*)malloc(strlen(comment) + 1);
@@ -356,8 +356,10 @@ void sendReport(float current_temperature, float switch_temperature, int relay_s
         client.print(persistent_data.desired_temperature);
         client.print("&tmp=");
         client.print(current_temperature);
-        client.print("&sw=");
-        client.print(switch_temperature);
+        client.print("&below=");
+        client.print(switch_offset_below);
+        client.print("&above=");
+        client.print(switch_offset_above);
         client.print("&relay=");
         client.print(relay_state ? "on" : "off");
         client.print("&txt=");
@@ -378,7 +380,7 @@ void sendReport(float current_temperature, float switch_temperature, int relay_s
         client.print("Host:");          // Send Host header even though it's optional in 1.0, because Nginx insists on it. Sigh...
         client.print(p_report_hostname);
         client.print("\r\n\r\n");
-        getResponse();
+        getResponse();  // includes client.stop()
     }
     setLEDflashing(0, 0);
 }

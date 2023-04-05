@@ -83,11 +83,10 @@ static void sendStatus(AsyncWebServerRequest *request)
     response += String(" <state>") + String(relay_state) + String("</state>\n") +
             String(" <des>")   + String(persistent_data.desired_temperature) + String("</des>\n") +
             String(" <prec>")   + String(persistent_data.precision) + String("</prec>\n") +
-            String(" <switch>")   + String(switch_temperature) + String("</switch>\n") +
+            String(" <switchoffsetabove>")   + String(switch_offset_above) + String("</switchoffsetabove>\n") +
+            String(" <switchoffsetbelow>")   + String(switch_offset_below) + String("</switchoffsetbelow>\n") +
             String(" <mode>")   + String(persistent_data.mode == HEATING ? "heating" : "cooling") + String("</mode>\n") +
             String(" <maxrep>")   + String(persistent_data.max_time_between_reports) + String("</maxrep>\n") +
-            String(" <maxdiscrepdown>")   + String(persistent_data.max_discrepancy_down) + String("</maxdiscrepdown>\n") +
-            String(" <maxdiscrepup>")   + String(persistent_data.max_discrepancy_up) + String("</maxdiscrepup>\n") +
         String("</status>\n");
     DEBUGDOPRINTLN(response);
     request->send(200, "text/xml", response);
@@ -168,14 +167,6 @@ static void settings(AsyncWebServerRequest *request)
         else if (p->name() == "precision")
         {
             made_a_change |= checkAndSetPersistentFloatValue("precision", p->value().c_str(), &persistent_data.precision);
-        }
-        else if (p->name() == "maxdiscrepdown")
-        {
-            made_a_change |= checkAndSetPersistentFloatValue("maxdiscrepdown", p->value().c_str(), &persistent_data.max_discrepancy_down);
-        }
-        else if (p->name() == "maxdiscrepup")
-        {
-            made_a_change |= checkAndSetPersistentFloatValue("maxdiscrepup", p->value().c_str(), &persistent_data.max_discrepancy_up);
         }
         else if (p->name() == "maxreporttime")
         {
