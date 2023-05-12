@@ -60,29 +60,39 @@ int readDsTemp(OneWire *ds, int reset_search, TEMPERATURE_DATA *res)
     MYDOPRINTLN("Found onewire device ");
     showaddr(res->addr);
     MYDOPRINTLN("");
-    ds->reset();
-    ds->select(res->addr);
-    ds->write(0x44); // start conversion
-
-    delay(1500);     // maybe 750ms is enough, maybe not
-
-    present = ds->reset();
-    ds->select(res->addr);    
-    ds->write(0xBE);         // Read Scratchpad
-
-    for (i = 0; i < sizeof data; i++)
+    for (int nb_tries=0; nb_tries < 5 && res->ok != ONEWIRE_OK; ++nb_tries)
     {
-        data[i] = ds->read();
+        ds->reset();
+        ds->select(res->addr);
+        ds->write(0x44); // start conversion
+
+        delay(750);
+
+        present = ds->reset();
+        ds->select(res->addr);    
+        ds->write(0xBE);         // Read Scratchpad
+
+        for (i = 0; i < sizeof data; i++)
+        {
+            data[i] = ds->read();
+        }
+
+        temp_c = (float)( ((data[1] << 8) + data[0]) & 0xffff) / 16.0;
+        // Apply a sanity check. We occasionally get a reading of several thousands of degrees
+        if (temp_c < -100  ||  temp_c > 300)
+        {
+            MYDOPRINT("temp out of range: ");
+            MYDOPRINTLN(temp_c);
+            continue;
+        }
+        // else the reading was OK
+        res->ok = ONEWIRE_OK;
     }
-
-    temp_c = (float)( ((data[1] << 8) + data[0]) & 0xffff) / 16.0;
-    // Apply a sanity check. We occasionally get a reading of several thousands of degrees
-    if (temp_c < -100  ||  temp_c > 300)
+    if (res->ok != ONEWIRE_OK)
     {
-        res->ok = DS_NOTHING_FOUND;
+        // failed after all retries
         return 1;
     }
-    res->ok = ONEWIRE_OK;
     res->temperature_c = temp_c;
     res->temperature_f = res->temperature_c * 1.8 + 32.0;
 #ifndef QUIET
@@ -113,59 +123,71 @@ void readSensors(SENSOR_DATA *result)
     }
     ds_start = 1;
     memset(got_values, 0, sizeof got_values);
+    MYDOPRINTLN("");
     MYDOPRINT("Read temperature sensors on pin ");
     MYDOPRINTLN(persistent_data.onewire_pin);
     pinMode(persistent_data.onewire_pin, INPUT_PULLUP);
-    while (readDsTemp(ds, ds_start, &temp_data))
+    // failures are generally very quick, so it's OK to have a fairly large number of retries
+    for (int nb_tries=0; nb_tries < 20 && result->temperature[0].ok != ONEWIRE_OK; ++nb_tries)
     {
-        if (temp_data.ok == ONEWIRE_OK)
+        if (nb_tries > 0)
         {
-            int first_empty = -1;
-            int stored = 0;
-            for (i = 0; i < MAX_TEMPERATURE_SENSORS; ++i)
+            MYDOPRINTLN("delay");
+            delay(50);  // just a little pause to give any interference time to settle down
+        }
+        MYDOPRINT("Attempt ");
+        MYDOPRINTLN(nb_tries);
+        while (readDsTemp(ds, ds_start, &temp_data))
+        {
+            if (temp_data.ok == ONEWIRE_OK)
             {
-                if (!memcmp(temp_data.addr, result->temperature[i].addr, sizeof temp_data.addr))
+                int first_empty = -1;
+                int stored = 0;
+                for (i = 0; i < MAX_TEMPERATURE_SENSORS; ++i)
                 {
-                    MYDOPRINT("replace temp for ");
+                    if (!memcmp(temp_data.addr, result->temperature[i].addr, sizeof temp_data.addr))
+                    {
+                        MYDOPRINT("replace temp for ");
+                        showaddr(temp_data.addr);
+                        MYDOPRINT(" at idx ");
+                        MYDOPRINT(i);
+                        MYDOPRINT(": ");
+                        MYDOPRINTLN(temp_data.temperature_c);
+                        result->temperature[i] = temp_data;
+                        stored = 1;
+                        if (result->nb_temperature_sensors < (i + 1)) 
+                        {
+                            result->nb_temperature_sensors = i + 1;
+                        }
+                        break;
+                    }
+                    if (first_empty < 0 && !result->temperature[i].addr[0])    // Assumes addr never starts with 0. May be invalid.
+                    {
+                        first_empty = i;
+                    }
+                }
+                if (!stored && first_empty >= 0)
+                {
+                    // Not seen this addr before, so put data in an empty slot.
+                    MYDOPRINT("store temp for ");
                     showaddr(temp_data.addr);
                     MYDOPRINT(" at idx ");
-                    MYDOPRINT(i);
+                    MYDOPRINT(first_empty);
                     MYDOPRINT(": ");
                     MYDOPRINTLN(temp_data.temperature_c);
-                    result->temperature[i] = temp_data;
-                    stored = 1;
-                    if (result->nb_temperature_sensors < (i + 1)) 
+                    result->temperature[first_empty] = temp_data;
+                    if (result->nb_temperature_sensors < (first_empty + 1)) 
                     {
-                        result->nb_temperature_sensors = i + 1;
+                        result->nb_temperature_sensors = first_empty + 1;
                     }
-                    break;
-                }
-                if (first_empty < 0 && !result->temperature[i].addr[0])    // Assumes addr never starts with 0. May be invalid.
-                {
-                    first_empty = i;
                 }
             }
-            if (!stored && first_empty >= 0)
+            else
             {
-                // Not seen this addr before, so put data in an empty slot.
-                MYDOPRINT("store temp for ");
-                showaddr(temp_data.addr);
-                MYDOPRINT(" at idx ");
-                MYDOPRINT(first_empty);
-                MYDOPRINT(": ");
-                MYDOPRINTLN(temp_data.temperature_c);
-                result->temperature[first_empty] = temp_data;
-                if (result->nb_temperature_sensors < (first_empty + 1)) 
-                {
-                    result->nb_temperature_sensors = first_empty + 1;
-                }
+                MYDOPRINTLN("not OK");
             }
+            ds_start = 0;
         }
-        else
-        {
-            MYDOPRINTLN("not OK");
-        }
-        ds_start = 0;
     }
 
     MYDOPRINT("nb temperatures ");

@@ -171,7 +171,8 @@ function gotStatusResponse()
           xmlDoc.loadXML(xhttp.responseText);
       }
       var cur_temp = 1 * xmlDoc.getElementsByTagName('tmp')[0].childNodes[0].nodeValue;
-      var relay_state = 1 * xmlDoc.getElementsByTagName('state')[0].childNodes[0].nodeValue;
+      var power_state = 1 * xmlDoc.getElementsByTagName('state')[0].childNodes[0].nodeValue;
+      var main_state = 1 * xmlDoc.getElementsByTagName('main')[0].childNodes[0].nodeValue;
       var des_temperature = 1 * xmlDoc.getElementsByTagName('des')[0].childNodes[0].nodeValue;
       var switchoffsetabove_val = 1 * xmlDoc.getElementsByTagName('switchoffsetabove')[0].childNodes[0].nodeValue;
       var switchoffsetbelow_val = 1 * xmlDoc.getElementsByTagName('switchoffsetbelow')[0].childNodes[0].nodeValue;
@@ -179,12 +180,13 @@ function gotStatusResponse()
       var switchtempabove = des_temperature + switchoffsetabove_val;
       var switchtempbelow = des_temperature + switchoffsetbelow_val;
 
-      getdocelem('onoffimg').src = (relay_state == 1)
+      getdocelem('onoffimg').src = (power_state == 1)
             ? (mode_val == 'heating' ? red_image : blue_image)
             : green_image;
-      getdocelem('onofftext').textContent = 'Power ' + ((relay_state == 1) ? ('on (' + mode_val + ')') : 'off');
+      getdocelem('onofftext').textContent = 'Power ' + ((power_state == 1) ? 'on' : 'off') + ' (' + mode_val + ')';
       getdocelem('displaytargettemp').textContent = des_temperature;
       getdocelem('displayprecision').textContent = xmlDoc.getElementsByTagName('prec')[0].childNodes[0].nodeValue;
+      getdocelem('displayfanoverrunsec').textContent = xmlDoc.getElementsByTagName('runon')[0].childNodes[0].nodeValue;
       getdocelem('displayreptime').textContent = xmlDoc.getElementsByTagName('maxrep')[0].childNodes[0].nodeValue;
       getdocelem('displaymode').textContent = mode_val;
       getdocelem('displayswitchabovetemp').textContent = switchtempabove;
@@ -197,7 +199,7 @@ function gotStatusResponse()
 
       // Graph
       var new_values = [];
-      var main_dot_colour = (relay_state == 1) ? on_colour : off_colour;
+      var controller_trace_colour = (power_state == 1) ? on_colour : off_colour;
       var temps = xmlDoc.getElementsByTagName('tmp');
 
       getdocelem('controlsensorid').textContent = temps[0].id;
@@ -223,7 +225,7 @@ function gotStatusResponse()
           {
               // first sensor is currently hard-coded as the controlling one
               // no list item, as this is already displayed in the html
-              dot_colour = main_dot_colour;
+              dot_colour = controller_trace_colour;
               line_width = 2;
           }
           else
@@ -232,7 +234,7 @@ function gotStatusResponse()
               font_colour = dot_colour = dot_colours[i % dot_colours.length];
               list_item.style.color = dot_colour;
               line_width = 1;
-              list_item.innerHTML = '<pre><font color=\"' + font_colour + '\">' + tmp_elem.id + '</font> ' + tmp + '</pre>';
+              list_item.innerHTML = '<pre><font color=\"' + font_colour + '\">' + tmp_elem.id + '</font>&nbsp;' + tmp + '</pre>';
               doc_legend_elem.appendChild(list_item);
           }
           new_values.push( [dot_colour, line_width, getGraphPos(1 * tmp, des_temperature)] );
@@ -370,6 +372,7 @@ E.g. at 16 with target 17.5:
 Target temperature degC: <span id=displaytargettemp>??</span> (<span id=displayswitchoffsetbelow>??</span> to <span id=displayswitchoffsetabove>??</span>)
 <br>Mode: <span id=displaymode>??</span>
 <br>Precision degC: <span id=displayprecision>??</span>
+<br>Fan run-on time (seconds): <span id=displayfanoverrunsec>??</span>
 <br>Max. time (seconds) between reports: <span id=displayreptime>??</span>
 </p>
 
@@ -381,6 +384,7 @@ Target temperature degC: <input type=text size=4 name=des_temp value='' />
 <br>Precision degC: <input type=text size=4 name=precision value='' />
 <br><span style='font-size:smaller'>This gives the minimum change in temperature that will be noticed.
 Set to a high value to give more inertia to both reporting and relay switching.</span>
+<br>Fan run-on time (seconds): <input type=text size=4 name=fan_overrun_sec value='' />
 <br>Max. time (seconds) between reports: <input type=text size=4 name=maxreporttime value='' />
 <br><span style='font-size:smaller'>This forces a report to be sent after the specified time
 even if there was no reportable event.

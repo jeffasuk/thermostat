@@ -80,12 +80,14 @@ static void sendStatus(AsyncWebServerRequest *request)
             String(sensor_data.temperature[sensor_index].temperature_c) +
             String("</tmp>\n");
     }
-    response += String(" <state>") + String(relay_state) + String("</state>\n") +
+    response += String(" <state>") + String(power_state) + String("</state>\n") +
+                String(" <main>") + String(main_state) + String("</main>\n") +
             String(" <des>")   + String(persistent_data.desired_temperature) + String("</des>\n") +
             String(" <prec>")   + String(persistent_data.precision) + String("</prec>\n") +
             String(" <switchoffsetabove>")   + String(switch_offset_above) + String("</switchoffsetabove>\n") +
             String(" <switchoffsetbelow>")   + String(switch_offset_below) + String("</switchoffsetbelow>\n") +
             String(" <mode>")   + String(persistent_data.mode == HEATING ? "heating" : "cooling") + String("</mode>\n") +
+            String(" <runon>") + String(persistent_data.fan_overrun_sec) + String("</runon>\n") +
             String(" <maxrep>")   + String(persistent_data.max_time_between_reports) + String("</maxrep>\n") +
         String("</status>\n");
     DEBUGDOPRINTLN(response);
@@ -167,6 +169,10 @@ static void settings(AsyncWebServerRequest *request)
         else if (p->name() == "precision")
         {
             made_a_change |= checkAndSetPersistentFloatValue("precision", p->value().c_str(), &persistent_data.precision);
+        }
+        else if (p->name() == "fan_overrun_sec")
+        {
+            made_a_change |= checkAndSetPersistentUint32Value("fan_overrun_sec", p->value().c_str(), &persistent_data.fan_overrun_sec);
         }
         else if (p->name() == "maxreporttime")
         {

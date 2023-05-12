@@ -4,7 +4,7 @@
 */
 #include "globals.h"
 
-char magic_tag[4] = "v20";    // To indicate that we've written to EEPROM, so it's OK to use the values.
+char magic_tag[4] = "v30";    // To indicate that we've written to EEPROM, so it's OK to use the values.
             // MUST change this if the format/structure of persistent data has changed, which
             // will force unit into setup mode, with its own WiFi access point
 
@@ -16,7 +16,8 @@ float switch_offset_below = 0;
 SENSOR_DATA sensor_data = {0};
 
 // 0 means "off", which matches the start-up hardware state
-int8_t relay_state = 0;
+int8_t main_state = 0;
+int8_t power_state = 0;
 
 uint8_t in_setup_mode = 0;
 
@@ -35,6 +36,7 @@ struct PERSISTENT_DATA persistent_data = {
     13,     // onewire_pin      Gets set in initial web set-up.
      3,     // rotate for passwords     Gets set in initial web set-up.
     20,     // max_time_between_reports, seconds
+    0,      // fan overrun period, seconds
     20.0,   // desired temperature
     0.2,    // precision, used for enhanced stability when looking at temperature changes, esp. for change of direction
     HEATING, // mode:  heating or cooling
@@ -44,6 +46,7 @@ struct PERSISTENT_DATA persistent_data = {
 PERSISTENT_INFO persistents[] = {
     {PERS_UINT16, "port",                       &persistent_data.port},
     {PERS_UINT32, "max_time_between_reports",   &persistent_data.max_time_between_reports},
+    {PERS_UINT32, "fan_overrun_sec",            &persistent_data.fan_overrun_sec},
     {PERS_UINT8,  "onewire_pin",                &persistent_data.onewire_pin},
     {PERS_INT8,   "rot",                        &persistent_data.rot},
     {PERS_FLOAT,  "desired_temperature",        &persistent_data.desired_temperature},

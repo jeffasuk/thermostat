@@ -334,7 +334,7 @@ void getResponse()
     client.stop();
 }
 
-void sendReport(float current_temperature, int8_t relay_state,
+void sendReport(float current_temperature, int8_t power_state, int8_t main_state,
         float switch_offset_below, float switch_offset_above,
         const char *comment, SENSOR_DATA *sensor_data)
 {
@@ -360,8 +360,10 @@ void sendReport(float current_temperature, int8_t relay_state,
         client.print(switch_offset_below);
         client.print("&above=");
         client.print(switch_offset_above);
-        client.print("&relay=");
-        client.print(relay_state ? "on" : "off");
+        client.print("&power=");
+        client.print(power_state ? "on" : "off");
+        client.print("&main=");
+        client.print(main_state ? "on" : "off");
         client.print("&txt=");
         client.print(sanitized_txt);
         for (int i = 0; i < MAX_TEMPERATURE_SENSORS; ++i)
