@@ -531,6 +531,8 @@ void loop()
             main_state_before_safety_switch_off = main_state;
             setLEDflashing(500, 500);
             safety_switch_off = 1;
+            sendReport(previous_temperature, POWER_OFF, POWER_OFF, switch_offset_below, switch_offset_above,
+                        "Turning off for safety.", &sensor_data);
         }
         power_state = main_state = POWER_OFF;
         digitalWrite(RELAY_PIN_POWER, 0);
@@ -555,6 +557,7 @@ void loop()
                 digitalWrite(RELAY_PIN_MAIN, 1);
             }
             safety_switch_off = 0;
+            strcat(report_text, "Safety switch-off ended. ");
         }
         temperature_to_report = current_temperature = sensor_data.temperature[0].temperature_c;
 #ifndef QUIET

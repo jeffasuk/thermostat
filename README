@@ -5,7 +5,8 @@ Output: Mains on/off
 Input: At least one one-wire temperature sensor
 
 Requires libraries:
-	ESP8266Wifi
-	ESPAsyncWebSrv
-	ESPAsyncTCP
-	OneWire
+    ESP8266Wifi
+    ESPAsyncWebSrv
+    ESPAsyncTCP
+    OneWire
+    DallasTemperature

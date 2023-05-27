@@ -5,9 +5,10 @@ Licensed under GNU General Public License v3.0
 Description
 ===========
 
-The Thermostatic Heater Control is based on an ESP8266 with on-board mains relay (sometimes known as the "Yunshan ESP8266 WIFI Network Relay Module"). It is capable of monitoring a OneWire temperature sensor, controlling a mains switch up to 10A and uploading results to a webserver via WiFi. Further temperature sensors may also be monitored, but only one is used for controlling the relay.
+The Thermostatic Heater Control is based on an ESP8266 with on-board mains relay (sometimes known as the "Yunshan ESP8266 WIFI Network Relay Module"). It is capable of monitoring a OneWire temperature sensor, controlling a mains switch up to 10A and uploading results to a webserver via WiFi. Further temperature sensors may also be monitored, but only one is used for controlling the relay. This will be the first sensor by ID.
+It can also be used on a similar dual-relay board, in which case one relay is used for controlling heating/cooling and the other for controlling fans on the heating/cooling module (allowing the fans to run on for a period after the heating/cooling is switched off).
 
-A website is provided for observing status and changing settings.
+The unit has a built-in website for observing status and changing settings.
 
 How to build the software
 =========================
@@ -48,14 +49,14 @@ Settings path
 Report path
     The 'path' part of the URL for sending reports to the webserver.
 
-When you send the new settings, the unit will store them and will try to connect via your WiFi to your webserver. It will display a confirmation page telling you the results. This page also includes the settings form, so that you can change things if there was an error.
+When you send the new settings, the unit will store them and will try to connect via your WiFi to your webserver. It will display a confirmation page telling you the results. This page also includes the settings form, so that you can change things if there was an error. (At the time of writing, there is a bug that causes the unit to crash after the settings have been written to EEPROM. It immediately reboots into normal operating mode using the settings that you specified.)
 
 The settings page has a checkbox to indicate that you want the unit to switch to normal operation after applying the settings, but it will do this only if it managed to connect to both the WiFi and the specified report server. Switching to normal operation includes taking down its own WiFi network. It is a good idea not to do this until you have checked the confirmation page.
 
 Normal operation
 ================
 
-Once set up, the unit enters a continual loop, reading the temperature sensor, deciding whether to switch the relay on or off, and (optionally) sending a report. The red LED matches the on/off state of the relay. The blue LED flashes twice a second while the sensor is being read and a report (if any) is being sent. The blue LED flashes once a second, with equal on/off periods, if there was failure to read te sensor, in which case the relay is switched off until a reading is obtained.
+Once set up, the unit enters a continual loop, reading the temperature sensor(s), deciding whether to switch the relay on or off, and (optionally) sending a report. The red LED matches the on/off state of the heating/cooling relay. The blue LED flashes twice a second while the sensors are being read and a report (if any) is being sent. The blue LED flashes once a second, with equal on/off periods, if there was failure to read the sensor, in which case the heating/cooling relay is switched off for safety until a reading is obtained.
 
 Webserver configuration
 =======================
@@ -67,10 +68,44 @@ Report format
 
 Reports are sent as an HTTP GET request with all values in the query-string. The individual items are:
 
-ident   As described above
-tmp    Temperature from the temperature sensor, in Celsius, as a decimal number.
-state  "on" or "off" to indicate the relay state.
+ident  Unit identifier as described above
+tmp    Temperature from the controlling temperature sensor, in Celsius, as a decimal number.
+des    The desired temperature.
+above  Offset of the switching temperature above the desired one (see algorithm description below).
+below  Offset of the switching temperature below the desired one (see algorithm description below).
+power  "on" or "off" to indicate the heating/cooling relay state.
+main   "on" or "off" to indicate the main relay state.
+txt    Explanatory text indicating why this report was sent.
+sensor_*  One item per detected sensor. The "*" part gives the sensor ID; the value id that sensor's temperature reading.
 
-Example: http://my-server.me.org.uk/cgi-bin/report.cgi?ident=Number+one&tmp=18.13&state=on
+Example: http://my-server.me.org.uk/cgi-bin/report.cgi?ident=Number+one&tmp=18.13&power=on&main=off&above=0.5&below=1.2&sensor_28FF6133811605E4=21.63&txt=Started+getting+cooler
 
 Notes on passwords: It is not a good idea to transmit or store passwords without some sort of encryption, or at least obfuscation. There are two passwords involved in this system, the unit's own password and that of the WiFi network that it is going to use. As described above, the unit's own password is not very important, but the WiFi network's password should be protected to prevent unauthorized access. It is not possible to put strong encryption onto the unit, not least because the unit itself needs to decrypt the password in order to use it to connect to the WiFi. So it uses a simple rotation encryption. While this does not provide a lot of protection, it does mean that, even if someone manages to get the memory contents from the unit, or snoop on the network traffic, they will not be able to find the password just by looking for an obvious character string.
+
+The algorithm
+=============
+A pair of offset values, switch_offset_above and switch_offset_below, indicates a range of below-above the desired temperature. They thus divide the full temperature range into 4 regions:
+  High        = above desired + switch_offset_above
+  Mid High    = below desired + switch_offset_above but above desired
+  Mid Low     = below desired but above desired + switch_offset_below
+  Low         = below desired + switch_offset_below
+(switch_offset_below should be negative).
+These are gradually tuned in response to how the temperature changes. The tuning not only affects the average temperature, getting that close to the desired temperature, but also adjust how long the heating is on or off.
+(NB. This description assumes heating mode. Cooling mode uses the same calculations, but inverts all the temperatures, so that "above" and "below" reverse their meaning.)
+Over several cycles, the algorithm determines whether heating is on for more or less than half the time.
+Average temperature is calculated by looking at peaks and troughs only.
+In all cases, if temperature is in the High range, heating is turned off, and if it is in Low range, heating is turned on.
+If heating predominates, these rules are applied:
+    In Mid Low, turn on.
+    In Mid High and temperature is falling, turn on.
+    In Mid High and temperature is rising, turn off.
+If heating does not predominate, these rules are applied:
+    In Mid High, turn off.
+    In Mid Low and temperature is falling, turn on.
+    In Mid Low and temperature is rising, turn off.
+In both cases:
+    If average temperature is too low, increase switch_offset_above.
+    If average temperature is too high, increase switch_offset_above.
+This tends to increase the spread between the offsets, improving reaction speed to changes in temperature direction. (At least that's the intention.)
+The offsets begin at zero, causing the heating to be turned on or off simply on whether the current temperature is below or above the target respectively.
+They are reset to zero if the target temperature is changed (which can be done via the web interface).
