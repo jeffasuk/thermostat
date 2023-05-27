@@ -28,7 +28,6 @@ static void showaddr(unsigned char  addr[8])
 typedef unsigned char   DEVICEADDR[8];
 OneWire  ds(persistent_data.onewire_pin);
 DallasTemperature sensors(&ds);
-static uint8_t done_begin = 0;
 
 void readSensors(SENSOR_DATA *result)
 {
@@ -48,18 +47,16 @@ void readSensors(SENSOR_DATA *result)
     MYDOPRINTLN("");
     MYDOPRINT("Read temperature sensors on pin ");
     MYDOPRINTLN(persistent_data.onewire_pin);
-    if (!done_begin)
-    {
-        sensors.begin();
-        sensors.setResolution(12);
-        done_begin = 1;
-    }
+    sensors.begin();
+    sensors.setResolution(12);
+
     new_foundaddrs = sensors.getDeviceCount();
     if (new_foundaddrs != nb_foundaddrs)
     {
         // changed number of sensors, so go back to the beginning
         // NB this means that if you're changing a sensor, wait at least one cycle after
         //  unplugging the old one before plugging the new one in.
+        //  This shouldn't be a problem unless the code is changed to extend the delay between reads.
         memset(foundaddrs, sizeof foundaddrs, 0);
         nb_foundaddrs = new_foundaddrs;
         result->nb_temperature_sensors = nb_foundaddrs;
