@@ -42,6 +42,7 @@ typedef enum REGION {REGION_HIGH, REGION_MID_HIGH, REGION_MID_LOW, REGION_LOW};
 static uint32_t     millis_now;
 static uint32_t     millis_at_last_report = 0;
 static float        previous_temperature = IMPOSSIBLE_TEMPERATURE;     // for detecting direction of change
+static uint32_t     switch_fans_off_at;
 
 // for comparing how long power is on vs. how long off
 static uint32_t time_when_switched_on = 0;
@@ -83,7 +84,7 @@ static void setIfImpossible(float *var, float default_value)
 }
 
 #ifdef NO_DONT_DO_THIS_RIGHT_NOW
-static int assessRelayStateSimple(int pre_relay_state)
+static int assessRelayStateSimple(int pre_power_state)
 {
     // This just switches on when too cool and off when too warm. Not currently in use.
     // Maybe we should be able switch to this at runtime for testing purposes.
@@ -107,11 +108,11 @@ static void revertToStartupAlgorithm()
 
 // Record peaks and troughs w.r.t. the current switch temperature.
 // Will be used later for tuning.
-static void recordPeaksAndTroughs(float switch_temperature, int8_t new_relay_state)
+static void recordPeaksAndTroughs(float switch_temperature, int8_t new_power_state)
 {
     float diff;
-    if ( (new_relay_state == POWER_OFF && persistent_data.mode == HEATING)
-      || (new_relay_state == POWER_ON  && persistent_data.mode == COOLING)
+    if ( (new_power_state == POWER_OFF && persistent_data.mode == HEATING)
+      || (new_power_state == POWER_ON  && persistent_data.mode == COOLING)
         )
     {
         // just switched heating off or cooling on, so we're heading for a temperature peak
@@ -195,12 +196,12 @@ static void assessPerformance()
     }
 }
 
-static int8_t assessRelayState(int8_t pre_relay_state)
+static int8_t assessRelayState(int8_t pre_power_state)
 {
 static float local_previous_temperature = IMPOSSIBLE_TEMPERATURE;    // NB: separate from previous_temperature used in reporting (in loop)
     uint8_t switched = 0;
     int8_t heating_is_more_powerful = 0;    // -1 == No,  0 == undecided,  +1 = Yes
-    int8_t new_relay_state = pre_relay_state;
+    int8_t new_power_state = pre_power_state;
     float norm_temp;
     int norm_changing;
     float switch_on_temperature;
@@ -253,7 +254,7 @@ static float local_previous_temperature = IMPOSSIBLE_TEMPERATURE;    // NB: sepa
             : (norm_temp >= normalizeTemperature(switch_off_temperature))    ? REGION_MID_LOW
             : REGION_LOW;
 
-    if (pre_relay_state == POWER_ON)
+    if (pre_power_state == POWER_ON)
     {   
         uint8_t do_switch = 0;
         if (region == REGION_HIGH)
@@ -315,7 +316,7 @@ static float local_previous_temperature = IMPOSSIBLE_TEMPERATURE;    // NB: sepa
         }
         if (do_switch)
         {
-            new_relay_state = POWER_OFF;
+            new_power_state = POWER_OFF;
             switched = 1;
             time_when_switched_off = millis_now;
             if (time_when_switched_on != 0)
@@ -324,7 +325,7 @@ static float local_previous_temperature = IMPOSSIBLE_TEMPERATURE;    // NB: sepa
             }
         }
     }
-    else // pre_relay_state == POWER_OFF
+    else // pre_power_state == POWER_OFF
     {   
         uint8_t do_switch = 0;
         if (region == REGION_LOW)
@@ -384,7 +385,7 @@ static float local_previous_temperature = IMPOSSIBLE_TEMPERATURE;    // NB: sepa
         }
         if (do_switch)
         {
-            new_relay_state = POWER_ON;
+            new_power_state = POWER_ON;
             switched = 1;
             time_when_switched_on = millis_now;
             if (time_when_switched_off != 0)
@@ -395,18 +396,18 @@ static float local_previous_temperature = IMPOSSIBLE_TEMPERATURE;    // NB: sepa
     }
     if (switched)
     {
-        recordPeaksAndTroughs(switch_mid_temperature, new_relay_state);
+        recordPeaksAndTroughs(switch_mid_temperature, new_power_state);
     }
 
     max_temperature = max(max_temperature, current_temperature);
     min_temperature = min(min_temperature, current_temperature);
 
-    if (switched && new_relay_state == POWER_ON)
+    if (switched && new_power_state == POWER_ON)
     {
         assessPerformance();
     }
 
-    if (switched && new_relay_state == POWER_OFF && pending_switch_offset_below != IMPOSSIBLE_TEMPERATURE)
+    if (switched && new_power_state == POWER_OFF && pending_switch_offset_below != IMPOSSIBLE_TEMPERATURE)
     {
         switch_offset_below = pending_switch_offset_below;
         pending_switch_offset_below = IMPOSSIBLE_TEMPERATURE;
@@ -414,7 +415,7 @@ static float local_previous_temperature = IMPOSSIBLE_TEMPERATURE;    // NB: sepa
         DOPRINTLN(switch_offset_below);
     }
 
-    if (switched && new_relay_state == POWER_ON && pending_switch_offset_above != IMPOSSIBLE_TEMPERATURE)
+    if (switched && new_power_state == POWER_ON && pending_switch_offset_above != IMPOSSIBLE_TEMPERATURE)
     {
         switch_offset_above = pending_switch_offset_above;
         pending_switch_offset_above = IMPOSSIBLE_TEMPERATURE;
@@ -422,7 +423,7 @@ static float local_previous_temperature = IMPOSSIBLE_TEMPERATURE;    // NB: sepa
         DOPRINTLN(switch_offset_above);
     }
 
-    return new_relay_state;
+    return new_power_state;
 }
 
 
@@ -445,7 +446,8 @@ void setup()
 
     pinMode(SETUP_PIN, INPUT_PULLUP);     
     pinMode(LED_PIN, OUTPUT);     
-    pinMode(RELAY_PIN, OUTPUT);     
+    pinMode(RELAY_PIN_MAIN, OUTPUT);     
+    pinMode(RELAY_PIN_POWER, OUTPUT);     
     DOPRINTLN("Sleep 1");
     delay(1000);
     if (eepromIsUninitialized())
@@ -492,6 +494,9 @@ void setup()
 // the loop routine runs over and over again forever:
 void loop()
 {
+    static uint8_t safety_switch_off = 0;
+    static int8_t power_state_before_safety_switch_off = 0;
+    static int8_t main_state_before_safety_switch_off = 0;
     setLED();   // allow operation of whatever flash/pulse mode has been set
 
     if (in_setup_mode)
@@ -515,19 +520,48 @@ void loop()
     readSensors(&sensor_data);
     if (sensor_data.temperature[0].ok != ONEWIRE_OK)
     {
-        DOPRINTLN("Failed to read controlling temperature sensor. Turning off for safety.");
-        relay_state = POWER_OFF;
-        setLEDflashing(500, 500);
-        digitalWrite(RELAY_PIN, 0);
+        if (safety_switch_off)
+        {
+            DOPRINTLN("Failed to read controlling temperature sensor. Continuing off for safety.");
+        }
+        else
+        {
+            DOPRINTLN("Failed to read controlling temperature sensor. Turning off for safety.");
+            power_state_before_safety_switch_off = power_state;
+            main_state_before_safety_switch_off = main_state;
+            setLEDflashing(500, 500);
+            safety_switch_off = 1;
+            sendReport(previous_temperature, POWER_OFF, POWER_OFF, switch_offset_below, switch_offset_above,
+                        "Turning off for safety.", &sensor_data);
+        }
+        power_state = main_state = POWER_OFF;
+        digitalWrite(RELAY_PIN_POWER, 0);
+        digitalWrite(RELAY_PIN_MAIN, 0);
     }
     else
     {
         float temperature_to_report;
         int do_check = 0;
-        char report_text[100] = "";
+        char report_text[200] = "";
+        if (safety_switch_off)
+        {
+            // we switched off for safety, but we now have a reading.
+            power_state = power_state_before_safety_switch_off;
+            main_state = main_state_before_safety_switch_off;
+            if (power_state)
+            {
+                digitalWrite(RELAY_PIN_POWER, 1);
+            }
+            if (main_state)
+            {
+                digitalWrite(RELAY_PIN_MAIN, 1);
+            }
+            safety_switch_off = 0;
+            strcat(report_text, "Safety switch-off ended. ");
+        }
         temperature_to_report = current_temperature = sensor_data.temperature[0].temperature_c;
 #ifndef QUIET
-        DOPRINT  (powerStateName[relay_state]);
+        DOPRINT  (powerStateName[power_state]);
         DOPRINT  (" at ");
         DOPRINT  (current_temperature);
         DOPRINT  ("deg ");
@@ -557,6 +591,17 @@ void loop()
         DOPRINT  ("  for ");
         DOPRINTLN(persistent_data.mode == HEATING ? "heating" : "cooling");
 #endif
+
+        millis_now = millis();
+
+        if (power_state == POWER_OFF && main_state == POWER_ON && millis_now >= switch_fans_off_at)
+        {
+            // fan overrun time expired, so switch main off
+            DOPRINTLN("Switching fans off");
+            strcat(report_text, "Switching fans off. ");
+            main_state = POWER_OFF;
+            digitalWrite(RELAY_PIN_MAIN, 0);
+        }
         if (previous_temperature == IMPOSSIBLE_TEMPERATURE  // start-up state
             || persistent_data.desired_temperature != previous_desired_temperature // new desired temperature
             || persistent_data.mode != previous_mode // new mode
@@ -618,35 +663,44 @@ void loop()
             do_check = 1;
         }
 
-        millis_now = millis();
-
         if (do_check)
         {
             // check temperature and turn relay on/off as appropriate
-            int8_t pre_relay_state = relay_state;
+            int8_t pre_power_state = power_state;
             if (abs(persistent_data.desired_temperature - current_temperature) > persistent_data.precision)
             {
                 //TODO Consider whether this should be conditional (probably not, as there's a check on change amount above).
                 // sufficiently far from desired to make a change
-                relay_state = assessRelayState(pre_relay_state);
+                power_state = assessRelayState(pre_power_state);
             }
-            if (relay_state != pre_relay_state)
+            if (power_state != pre_power_state)
             {
-                if (relay_state)
+                if (power_state)
                 {
                     strcat(report_text, "Turning on");
                     DOPRINTLN("report because turning on");
                     DOPRINTLN("turn on");
-                    relay_state = POWER_ON;
-                    digitalWrite(RELAY_PIN, 1);
+                    power_state = main_state = POWER_ON;
+                    digitalWrite(RELAY_PIN_MAIN, 1);
+                    digitalWrite(RELAY_PIN_POWER, 1);
                 }
                 else
                 {
                     strcat(report_text, "Turning off");
                     DOPRINTLN("report because turning off");
                     DOPRINTLN("turn off");
-                    relay_state = POWER_OFF;
-                    digitalWrite(RELAY_PIN, 0);
+                    power_state = POWER_OFF;
+                    digitalWrite(RELAY_PIN_POWER, 0);
+                    if (persistent_data.fan_overrun_sec == 0)
+                    {
+                        // No fan overrun, so switch main off too
+                        main_state = POWER_OFF;
+                        digitalWrite(RELAY_PIN_MAIN, 0);
+                    }
+                    else
+                    {
+                        switch_fans_off_at = millis_now + persistent_data.fan_overrun_sec * 1000;
+                    }
                 }
             }
         }
@@ -661,7 +715,7 @@ void loop()
         {
             DOPRINT  ("reporting because: ");
             DOPRINTLN(report_text);
-            sendReport(temperature_to_report, relay_state, switch_offset_below, switch_offset_above,
+            sendReport(temperature_to_report, power_state, main_state, switch_offset_below, switch_offset_above,
                         report_text, &sensor_data);
             millis_at_last_report = millis_now;
         }

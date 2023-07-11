@@ -25,7 +25,9 @@ extern char magic_tag[4];
 #endif
 
 #define LED_PIN 2
-#define RELAY_PIN  4  // Relay control.
+#define RELAY_PIN_POWER 4  // Relay control. Use this one for single-relay.
+#define RELAY_PIN_MAIN  5  // Relay control. Use this one for main power relay which switches everything off.
+                           //       Irrelevant in single-relay.
 #define SETUP_PIN 14
 
 // modes
@@ -54,7 +56,8 @@ extern float switch_temperature;
 extern float switch_offset_above;
 extern float switch_offset_below;
 extern SENSOR_DATA sensor_data;
-extern int8_t relay_state;
+extern int8_t power_state;
+extern int8_t main_state;
 extern uint8_t in_setup_mode;
 extern char *new_etag;
 
@@ -72,6 +75,7 @@ struct PERSISTENT_DATA {    // this structure can be stored in EEPROM
     uint8_t onewire_pin;
     int8_t  rot;
     uint32_t max_time_between_reports;
+    uint32_t fan_overrun_sec;
     float   desired_temperature;
     float   precision;
     uint8_t mode;

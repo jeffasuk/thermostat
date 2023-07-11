@@ -4,6 +4,7 @@
 */
 #include <Arduino.h>
 #include "OneWire.h"
+#include <DallasTemperature.h>
 #include "globals.h"
 #include "utils.h"
 #include "sensors.h"
@@ -18,93 +19,24 @@
 
 static void showaddr(unsigned char  addr[8])
 {
+#ifndef QUIET
     char buf[17];
     MYDOPRINT(formatAddr(buf, addr));
-}
-
-
-int readDsTemp(OneWire *ds, int reset_search, TEMPERATURE_DATA *res)
-{
-    char i;
-    char present = 0;
-    char data[12];
-    float temp_c;
-
-    if (reset_search)
-    {
-        MYDOPRINTLN("Reset search for onewire devices");
-        ds->reset_search();
-    }
-
-    res->ok = DS_NOTHING_FOUND;
-    if (!ds->search(res->addr))
-    {
-        MYDOPRINTLN("End of onewire devices");
-        return 0;
-    }
-
-    if (OneWire::crc8(res->addr, 7) != res->addr[7])
-    {
-        MYDOPRINTLN("Invalid CRC");
-        res->ok = DS_INVALID_CRC;
-        return 1;
-    }
-
-    if (res->addr[0] != 0x10 and res->addr[0] != 0x28 and res->addr[0] != 0x22)
-    {
-        MYDOPRINTLN("Unknown device");
-        res->ok = DS_UNKNOWN_DEVICE;
-        return 1;
-    }
-
-    MYDOPRINTLN("Found onewire device ");
-    showaddr(res->addr);
-    MYDOPRINTLN("");
-    ds->reset();
-    ds->select(res->addr);
-    ds->write(0x44); // start conversion
-
-    delay(1500);     // maybe 750ms is enough, maybe not
-
-    present = ds->reset();
-    ds->select(res->addr);    
-    ds->write(0xBE);         // Read Scratchpad
-
-    for (i = 0; i < sizeof data; i++)
-    {
-        data[i] = ds->read();
-    }
-
-    temp_c = (float)( ((data[1] << 8) + data[0]) & 0xffff) / 16.0;
-    // Apply a sanity check. We occasionally get a reading of several thousands of degrees
-    if (temp_c < -100  ||  temp_c > 300)
-    {
-        res->ok = DS_NOTHING_FOUND;
-        return 1;
-    }
-    res->ok = ONEWIRE_OK;
-    res->temperature_c = temp_c;
-    res->temperature_f = res->temperature_c * 1.8 + 32.0;
-#ifndef QUIET
-    {
-        char num_buf[7];
-        MYDOPRINT("temp (");
-        sprintf(num_buf, "0x%x", ((data[1] << 8) + data[0]) & 0xffff);
-        MYDOPRINT(num_buf);
-        MYDOPRINT(") ");
-        MYDOPRINTLN(res->temperature_c);
-    }
 #endif
-    return 1;   // try to find next sensor
 }
+
+typedef unsigned char   DEVICEADDR[8];
+OneWire  ds(persistent_data.onewire_pin);
+DallasTemperature sensors(&ds);
 
 void readSensors(SENSOR_DATA *result)
 {
     int i;
     int ds_start;
     TEMPERATURE_DATA temp_data;
-    int got_values[MAX_TEMPERATURE_SENSORS];
-    OneWire  *ds = new OneWire(persistent_data.onewire_pin);
+    static DEVICEADDR foundaddrs[MAX_TEMPERATURE_SENSORS];
+    static int nb_foundaddrs = 0;
+    int new_foundaddrs;
 
     // Set all readings to "not ok", so caller knows if each reading is valid
     for (i = 0; i < MAX_TEMPERATURE_SENSORS; ++i)
@@ -112,63 +44,74 @@ void readSensors(SENSOR_DATA *result)
         result->temperature[i].ok = ONEWIRE_NO_RESULT;
     }
     ds_start = 1;
-    memset(got_values, 0, sizeof got_values);
+    MYDOPRINTLN("");
     MYDOPRINT("Read temperature sensors on pin ");
     MYDOPRINTLN(persistent_data.onewire_pin);
-    pinMode(persistent_data.onewire_pin, INPUT_PULLUP);
-    while (readDsTemp(ds, ds_start, &temp_data))
+    sensors.begin();
+    sensors.setResolution(12);
+
+    new_foundaddrs = sensors.getDeviceCount();
+    if (new_foundaddrs != nb_foundaddrs)
     {
-        if (temp_data.ok == ONEWIRE_OK)
+        // changed number of sensors, so go back to the beginning
+        // NB this means that if you're changing a sensor, wait at least one cycle after
+        //  unplugging the old one before plugging the new one in.
+        //  This shouldn't be a problem unless the code is changed to extend the delay between reads.
+        memset(foundaddrs, sizeof foundaddrs, 0);
+        nb_foundaddrs = new_foundaddrs;
+        result->nb_temperature_sensors = nb_foundaddrs;
+        // Search the wire for addresses
+        for (int i=0; i < nb_foundaddrs; i++)
         {
-            int first_empty = -1;
-            int stored = 0;
-            for (i = 0; i < MAX_TEMPERATURE_SENSORS; ++i)
+            if (sensors.getAddress(foundaddrs[i], i))
             {
-                if (!memcmp(temp_data.addr, result->temperature[i].addr, sizeof temp_data.addr))
-                {
-                    MYDOPRINT("replace temp for ");
-                    showaddr(temp_data.addr);
-                    MYDOPRINT(" at idx ");
-                    MYDOPRINT(i);
-                    MYDOPRINT(": ");
-                    MYDOPRINTLN(temp_data.temperature_c);
-                    result->temperature[i] = temp_data;
-                    stored = 1;
-                    if (result->nb_temperature_sensors < (i + 1)) 
-                    {
-                        result->nb_temperature_sensors = i + 1;
-                    }
-                    break;
-                }
-                if (first_empty < 0 && !result->temperature[i].addr[0])    // Assumes addr never starts with 0. May be invalid.
-                {
-                    first_empty = i;
-                }
+                MYDOPRINT("Found device ");
+                MYDOPRINT(i);
+                MYDOPRINT(" with address: ");
+                showaddr(foundaddrs[i]);
+                MYDOPRINTLN("");
             }
-            if (!stored && first_empty >= 0)
+            else
             {
-                // Not seen this addr before, so put data in an empty slot.
-                MYDOPRINT("store temp for ");
-                showaddr(temp_data.addr);
-                MYDOPRINT(" at idx ");
-                MYDOPRINT(first_empty);
-                MYDOPRINT(": ");
-                MYDOPRINTLN(temp_data.temperature_c);
-                result->temperature[first_empty] = temp_data;
-                if (result->nb_temperature_sensors < (first_empty + 1)) 
-                {
-                    result->nb_temperature_sensors = first_empty + 1;
-                }
+                MYDOPRINTLN("Bad address");
             }
         }
-        else
-        {
-            MYDOPRINTLN("not OK");
-        }
-        ds_start = 0;
     }
 
-    MYDOPRINT("nb temperatures ");
+    MYDOPRINT(millis());
+    MYDOPRINTLN(" getDeviceCount");
+    result->nb_temperature_sensors = sensors.getDeviceCount();
+    MYDOPRINT(millis());
     MYDOPRINTLN(result->nb_temperature_sensors);
-    delete ds;
+    MYDOPRINT(millis());
+    MYDOPRINTLN(" requestTemperatures");
+    sensors.requestTemperatures();
+    for (int i=0; i < result->nb_temperature_sensors; i++)
+    {
+        TEMPERATURE_DATA *res = &(result->temperature[i]);
+        MYDOPRINT(millis());
+        MYDOPRINT("  temp ");
+        MYDOPRINT(i);
+        MYDOPRINT(" ");
+        showaddr(foundaddrs[i]);
+        MYDOPRINTLN("");
+        float temp_c = sensors.getTempC(foundaddrs[i]);
+        MYDOPRINT(millis());
+        MYDOPRINT(" ");
+        MYDOPRINTLN(temp_c);
+        if (temp_c == -127.00)
+        {
+            MYDOPRINTLN("Failed to read sensor");
+            continue;
+        }
+        // else the reading was OK
+        res->ok = ONEWIRE_OK;
+        res->temperature_c = temp_c;
+        res->temperature_f = DallasTemperature::toFahrenheit(temp_c);
+        memcpy(res->addr, foundaddrs[i], sizeof foundaddrs[i]);
+    }
+    MYDOPRINT(millis());
+    MYDOPRINT(" end get temperatures from ");
+    MYDOPRINT(result->nb_temperature_sensors);
+    MYDOPRINTLN(" sensors");
 }
